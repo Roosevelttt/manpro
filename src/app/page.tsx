@@ -2,13 +2,29 @@
 
 import { useState, useRef } from 'react';
 
+// --- Constants ---
 const RECORDING_INTERVAL_MS = 5000;
 const RECOGNITION_TIMEOUT_MS = 25000;
+
+// --- Type Definitions ---
+interface Artist {
+  name: string;
+}
+
+interface Album {
+  name: string;
+}
+
+interface SongResult {
+  title: string;
+  artists: Artist[];
+  album: Album;
+}
 
 export default function HomePage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isRecognizing, setIsRecognizing] = useState(false);
-  const [result, setResult] = useState<any | null>(null);
+  const [result, setResult] = useState<SongResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -72,7 +88,7 @@ export default function HomePage() {
 
     try {
       const response = await fetch('/api/recognize', { method: 'POST', body: formData });
-      const data = await response.json();
+      const data: SongResult = await response.json();
 
       if (response.ok) {
         setResult(data);
@@ -119,7 +135,7 @@ export default function HomePage() {
       {result && (
         <div className="mt-8 p-6 bg-gray-800 rounded-lg text-left w-full max-w-md">
           <h2 className="text-2xl font-bold mb-2">{result.title}</h2>
-          <p className="text-lg text-gray-300">by {result.artists.map((artist: any) => artist.name).join(', ')}</p>
+          <p className="text-lg text-gray-300">by {result.artists.map((artist) => artist.name).join(', ')}</p>
           <p className="text-md text-gray-400">Album: {result.album.name}</p>
         </div>
       )}
