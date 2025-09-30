@@ -36,7 +36,7 @@ export default function HomePage() {
 
       timeoutRef.current = setTimeout(() => {
         if (mediaRecorderRef.current?.state === 'recording') {
-            setError("Couldn't find a match. Try humming more clearly in a quiet room.");
+            setError("Couldn't find a match. Try getting closer to the source!");
             handleStopRecording();
         }
       }, RECOGNITION_TIMEOUT_MS);
@@ -92,7 +92,7 @@ export default function HomePage() {
   const getStatusText = () => {
     if (error) return "";
     if (isRecording) {
-      return isRecognizing ? "Analyzing hum..." : "Listening... Keep humming!";
+      return isRecognizing ? "Analyzing song..." : "Listening... Keep the song playing!";
     }
     if (result) return "Result found!";
     return "Ready to listen";
@@ -100,14 +100,14 @@ export default function HomePage() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-24 text-center">
-      <h1 className="text-4xl font-bold mb-4">Hum to Find a Song 🎶</h1>
+      <h1 className="text-4xl font-bold mb-4">Sonar - Find a Song!</h1>
       <p className={`text-lg mb-8 text-gray-400 ${isRecording && 'animate-pulse'}`}>
         {getStatusText()}
       </p>
       
       <div className="flex gap-4">
         {!isRecording ? (
-          <button onClick={handleStartRecording} className="px-6 py-3 bg-green-500 text-white font-semibold rounded-lg">
+          <button onClick={handleStartRecording} className="px-6 py-3 bg-cyan-400 text-black font-semibold rounded-lg">
             Start Listening
           </button>
         ) : (
