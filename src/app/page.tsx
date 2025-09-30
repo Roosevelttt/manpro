@@ -1,103 +1,129 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useState, useRef } from 'react';
+
+const RECORDING_INTERVAL_MS = 5000;
+const RECOGNITION_TIMEOUT_MS = 25000;
+
+export default function HomePage() {
+  const [isRecording, setIsRecording] = useState(false);
+  const [isRecognizing, setIsRecognizing] = useState(false);
+  const [result, setResult] = useState<any | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleStartRecording = async () => {
+    setResult(null);
+    setError(null);
+    setIsRecognizing(false);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0 && !result) {
+          recognizeSong(event.data);
+        }
+      };
+
+      mediaRecorderRef.current.start(RECORDING_INTERVAL_MS);
+      setIsRecording(true);
+
+      timeoutRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current?.state === 'recording') {
+            setError("Couldn't find a match. Try humming more clearly in a quiet room.");
+            handleStopRecording();
+        }
+      }, RECOGNITION_TIMEOUT_MS);
+
+    } catch (err) {
+      console.error("Error accessing microphone:", err);
+      setError("Microphone access denied. Please allow access in your browser settings.");
+    }
+  };
+
+  const handleStopRecording = () => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+    setIsRecording(false);
+    setIsRecognizing(false);
+  };
+
+  const recognizeSong = async (audioBlob: Blob) => {
+    if (isRecognizing || result) return;
+
+    setIsRecognizing(true);
+    const formData = new FormData();
+    formData.append('sample', audioBlob, 'recording.wav');
+
+    try {
+      const response = await fetch('/api/recognize', { method: 'POST', body: formData });
+      const data = await response.json();
+
+      if (response.ok) {
+        setResult(data);
+        handleStopRecording();
+      } else {
+        console.log("No result in this chunk, waiting for the next one...");
+      }
+    } catch (err) {
+      console.error("Recognition error:", err);
+      setError('An error occurred during recognition.');
+      handleStopRecording(); // stop on crit error
+    } finally {
+      setIsRecognizing(false);
+    }
+  };
+
+  const getStatusText = () => {
+    if (error) return "";
+    if (isRecording) {
+      return isRecognizing ? "Analyzing hum..." : "Listening... Keep humming!";
+    }
+    if (result) return "Result found!";
+    return "Ready to listen";
+  }
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+    <main className="flex min-h-screen flex-col items-center justify-center p-24 text-center">
+      <h1 className="text-4xl font-bold mb-4">Hum to Find a Song 🎶</h1>
+      <p className={`text-lg mb-8 text-gray-400 ${isRecording && 'animate-pulse'}`}>
+        {getStatusText()}
+      </p>
+      
+      <div className="flex gap-4">
+        {!isRecording ? (
+          <button onClick={handleStartRecording} className="px-6 py-3 bg-green-500 text-white font-semibold rounded-lg">
+            Start Listening
+          </button>
+        ) : (
+          <button onClick={handleStopRecording} className="px-6 py-3 bg-red-500 text-white font-semibold rounded-lg">
+            Stop
+          </button>
+        )}
+      </div>
+      {result && (
+        <div className="mt-8 p-6 bg-gray-800 rounded-lg text-left w-full max-w-md">
+          <h2 className="text-2xl font-bold mb-2">{result.title}</h2>
+          <p className="text-lg text-gray-300">by {result.artists.map((artist: any) => artist.name).join(', ')}</p>
+          <p className="text-md text-gray-400">Album: {result.album.name}</p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      )}
+      {error && <p className="mt-4 text-red-500">{error}</p>}
+    </main>
   );
 }
