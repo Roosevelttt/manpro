@@ -23,6 +23,7 @@ export function analyzeAudioBuffer(buffer: Buffer, forHumming: boolean = false):
   } else {
     OPTIMAL_MIN_DURATION = 5;
     OPTIMAL_MAX_DURATION = 20;
+  }
 
   const OPTIMAL_MAX_SIZE = 1024 * 1024; // 1MB
 
