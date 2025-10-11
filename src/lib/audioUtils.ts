@@ -89,19 +89,24 @@ export const RECORDING_DURATION = {
  * Audio constraints for getUserMedia optimized for song recognition
  * Uses balanced settings that work well for both music and humming
  */
-export function getOptimalAudioConstraints(forHumming: boolean = false): MediaTrackConstraints {
-  return {
+export function getOptimalAudioConstraints(_forHumming: boolean = false): MediaTrackConstraints {
+  const audioConstraints = {
     echoCancellation: false,
     noiseSuppression: false,
-    autoGainControl: true,
-    sampleRate: 48000,
+    
+    autoGainControl: false,
     channelCount: 1,
+    sampleRate: 44100,
+    latency: 0.005,
+    
     advanced: [
       { echoCancellation: false },
       { noiseSuppression: false },
-      { autoGainControl: true },
-    ] as any
+      { autoGainControl: false },
+    ] as Array<{ echoCancellation?: boolean; noiseSuppression?: boolean; autoGainControl?: boolean }>
   };
+
+  return audioConstraints;
 }
 
 /**
@@ -170,7 +175,8 @@ export async function normalizeAudioVolume(
     console.log(`Processing audio: ${audioBlob.type}, ${(audioBlob.size / 1024).toFixed(2)} KB`);
 
     // Create audio context
-    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const AudioContextConstructor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    audioContext = new AudioContextConstructor();
 
     // Convert blob to array buffer
     const arrayBuffer = await audioBlob.arrayBuffer();
@@ -184,10 +190,10 @@ export async function normalizeAudioVolume(
     let audioBuffer: AudioBuffer;
     try {
       audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-    } catch (decodeError: any) {
+    } catch (decodeError) {
       const errorDetails = {
-        name: decodeError?.name || 'Unknown',
-        message: decodeError?.message || String(decodeError),
+        name: (decodeError as Error)?.name || 'Unknown',
+        message: (decodeError as Error)?.message || String(decodeError),
         blobType: audioBlob.type,
         blobSize: audioBlob.size,
         arrayBufferSize: arrayBuffer.byteLength,
@@ -198,7 +204,7 @@ export async function normalizeAudioVolume(
       console.error('Full error object:', decodeError);
 
       // Check if it's a codec issue
-      if (decodeError?.name === 'EncodingError' || decodeError?.message?.includes('decode')) {
+      if ((decodeError as Error)?.name === 'EncodingError' || (decodeError as Error)?.message?.includes('decode')) {
         console.warn('Audio codec not supported by Web Audio API. Using original audio without processing.');
       } else {
         console.warn('Unexpected decoding error. Using original audio without processing.');
@@ -272,12 +278,12 @@ export async function normalizeAudioVolume(
 
     return wavBlob;
 
-  } catch (error: any) {
+  } catch (error) {
     // Catch-all error handler with proper error serialization
     const errorDetails = {
-      name: error?.name || 'Unknown',
-      message: error?.message || String(error),
-      stack: error?.stack?.split('\n').slice(0, 3).join('\n') || 'No stack trace'
+      name: (error as Error)?.name || 'Unknown',
+      message: (error as Error)?.message || String(error),
+      stack: (error as Error)?.stack?.split('\n').slice(0, 3).join('\n') || 'No stack trace'
     };
 
     console.error('❌ Unexpected error in audio normalization:', errorDetails);

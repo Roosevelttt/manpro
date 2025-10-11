@@ -49,7 +49,8 @@ export default function HomePage() {
   const processAudio = async (audioBlob: Blob): Promise<Blob> => {
     try {
       // Create audio context
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const AudioContextConstructor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioContext = new AudioContextConstructor();
 
       // Convert blob to array buffer
       const arrayBuffer = await audioBlob.arrayBuffer();
@@ -58,7 +59,7 @@ export default function HomePage() {
       let audioBuffer: AudioBuffer;
       try {
         audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      } catch (e) {
+      } catch (_e) {
         console.log('Using original audio (decoding not supported for this format)');
         await audioContext.close();
         return audioBlob;
@@ -332,7 +333,7 @@ export default function HomePage() {
             )}
           </div>
           <p className="text-lg mb-1" style={{ color: '#F1F1F3' }}>
-              by {result.artists.map((artist: any) => artist.name).join(', ')}
+              by {result.artists.map((artist: { name: string }) => artist.name).join(', ')}
             </p>
             <p className="text-md" style={{ color: '#EEECFF', opacity: 0.7 }}>
               Album: {result.album.name}

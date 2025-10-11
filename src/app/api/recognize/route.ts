@@ -9,7 +9,7 @@ interface SongResult {
   title: string;
   artists: Array<{ name: string }>;
   album: { name: string };
-  external_metadata?: any;
+  external_metadata?: Record<string, unknown>;
   source: 'music' | 'humming';
   score?: string;
   error?: string;

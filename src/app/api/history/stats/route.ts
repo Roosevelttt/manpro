@@ -3,8 +3,13 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
+interface SelectedSearchHistory {
+  artists: string;
+  searchedAt: Date;
+}
+
 // GET - history stats
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions);
 
@@ -16,7 +21,7 @@ export async function GET(req: NextRequest) {
     }
 
     // fetch ALL history for this user
-    const history = await prisma.searchHistory.findMany({
+    const history: SelectedSearchHistory[] = await prisma.searchHistory.findMany({
       where: {
         userId: session.user.id,
       },
@@ -31,7 +36,7 @@ export async function GET(req: NextRequest) {
 
     // most searched artists
     const artistCounts: { [key: string]: number } = {};
-    history.forEach(item => {
+    history.forEach((item: SelectedSearchHistory) => {
       const artists = JSON.parse(item.artists);
       artists.forEach((artist: string) => {
         artistCounts[artist] = (artistCounts[artist] || 0) + 1;
@@ -47,19 +52,19 @@ export async function GET(req: NextRequest) {
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
     const thisWeek = history.filter(
-      item => new Date(item.searchedAt) >= oneWeekAgo
+      (item: SelectedSearchHistory) => new Date(item.searchedAt) >= oneWeekAgo
     ).length;
 
     // monthly songs
     const oneMonthAgo = new Date();
     oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
     const thisMonth = history.filter(
-      item => new Date(item.searchedAt) >= oneMonthAgo
+      (item: SelectedSearchHistory) => new Date(item.searchedAt) >= oneMonthAgo
     ).length;
 
     // first search date
     const firstSearch = history.length > 0
-      ? history.reduce((earliest, item) => {
+      ? history.reduce((earliest: Date, item: SelectedSearchHistory) => {
           const date = new Date(item.searchedAt);
           return date < earliest ? date : earliest;
         }, new Date(history[0].searchedAt))

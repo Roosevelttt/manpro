@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import type { SearchHistory } from '.prisma/client';
+
+interface FormattedSearchHistory extends Omit<SearchHistory, 'artists'> {
+  artists: string[];
+}
 
 // GET - fetch user search history
 export async function GET(req: NextRequest) {
@@ -41,7 +46,7 @@ export async function GET(req: NextRequest) {
     ]);
 
     // parse artists json string back to array
-    const formattedHistory = history.map(item => ({
+    const formattedHistory: FormattedSearchHistory[] = history.map((item: SearchHistory) => ({
       ...item,
       artists: JSON.parse(item.artists),
     }));
