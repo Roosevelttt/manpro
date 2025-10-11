@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import crypto from 'crypto';
 import { validateAudioBuffer, analyzeAudioBuffer } from '@/lib/audioUtils';
+
 interface SongResult {
   title: string;
   artists: Array<{ name: string }>;
@@ -11,6 +12,23 @@ interface SongResult {
   external_metadata?: any;
   source: 'music' | 'humming';
   score?: string;
+  error?: string;
+}
+
+interface ACRCloudMusicMetadata {
+  title: string;
+  artists: Array<{ name: string }>;
+  album: { name: string; cover_url?: string };
+  release_date?: string;
+  duration_ms?: number;
+  label?: string;
+  acr_id?: string;
+}
+
+interface ACRCloudResponse {
+  status?: { code: number };
+  metadata?: { music: ACRCloudMusicMetadata[] };
+  error?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -43,10 +61,31 @@ export async function POST(req: NextRequest) {
     console.log('Trying ACRCloud recognition (music + humming)...');
     const result = await recognizeWithACRCloud(audioBuffer, audioFile.name);
 
-    if (result) {
+    if (result && !result.error) {
       const sourceType = result.source === 'humming' ? 'humming' : 'recorded music';
       console.log(`Song recognized by ACRCloud (${sourceType})`);
+      
+      // Save history only if user is logged in
+      const session = await getServerSession(authOptions);
+      if (session && session.user) {
+        try {
+          await prisma.searchHistory.create({
+            data: {
+              userId: session.user.id,
+              title: result.title,
+              artists: JSON.stringify(result.artists.map(a => a.name)),
+              album: result.album.name,
+              // Other fields would go here if needed
+            },
+          });
+        } catch (dbError) {
+          console.error('Failed to save to history:', dbError);
+        }
+      }
+      
       return NextResponse.json(result);
+    } else if (result && result.error) {
+      return NextResponse.json({ error: result.error }, { status: 404 });
     }
 
     console.log('❌ No match found');
@@ -71,7 +110,13 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
 
   if (!host || !accessKey || !accessSecret) {
     console.error('ACRCloud credentials not configured');
-    throw new Error('ACRCloud credentials are not configured.');
+    return { 
+      title: '', 
+      artists: [], 
+      album: { name: '' }, 
+      source: 'music',
+      error: 'ACRCloud credentials are not configured.' 
+    };
   }
 
   try {
@@ -111,41 +156,28 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
       body: formData,
     });
 
-    const result = await response.json();
+    const result: ACRCloudResponse = await response.json();
 
     if (result.status && result.status.code === 0 && result.metadata && result.metadata.music.length > 0) {
       const songData = result.metadata.music[0];
-
-      // check log in status
-      const session = await getServerSession(authOptions);
-
-      // save history only if user is logged in
-      if (session && session.user) {
-        try {
-          await prisma.searchHistory.create({
-            data: {
-              userId: session.user.id,
-              title: songData.title,
-              artists: JSON.stringify(songData.artists.map((a: any) => a.name)),
-              album: songData.album.name,
-              releaseDate: songData.release_date || null,
-              coverUrl: songData.album.cover_url || null,
-              duration: songData.duration_ms ? Math.floor(songData.duration_ms / 1000) : null,
-              label: songData.label || null,
-              acrCloudId: songData.acr_id || null,
-            },
-          });
-        } catch (dbError) {
-          console.error('Failed to save to history:', dbError);
-        }
-      }
-
-      return NextResponse.json(songData);
+      
+      return {
+        title: songData.title,
+        artists: songData.artists,
+        album: { name: songData.album.name },
+        source: 'music'
+      };
     } else {
-      return NextResponse.json({ error: 'No result found.' }, { status: 404 });
+      return null;
     }
   } catch (error) {
     console.error('ACRCloud recognition error:', error);
-    throw error;
+    return { 
+      title: '', 
+      artists: [], 
+      album: { name: '' }, 
+      source: 'music',
+      error: 'Recognition failed due to an internal error' 
+    };
   }
 }

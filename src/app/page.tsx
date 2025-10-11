@@ -26,6 +26,7 @@ interface SongResult {
   title: string;
   artists: Artist[];
   album: Album;
+  source?: 'music' | 'humming';
 }
 
 export default function HomePage() {
