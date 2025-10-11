@@ -1,4 +1,4 @@
-// This is your Prisma schema file.
+// This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
@@ -7,44 +7,27 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url       = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
-// Model for users, managed by NextAuth.js
+// User model - stores user account information
 model User {
-  id            String @id @default(cuid())
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String?   // null for OAuth users (Google login)
   name          String?
-  email         String? @unique
   emailVerified DateTime?
   image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
   accounts      Account[]
   sessions      Session[]
-  history       RecognitionHistory[] // A user can have many recognition history entries
+  searchHistory SearchHistory[]
 }
 
-// Model for storing unique songs to avoid duplicates
-model Song {
-  id          String @id @default(cuid())
-  title       String
-  artist      String
-  album       String
-  acrcloud_id String @unique // The unique ID from the ACRCloud API
-  history     RecognitionHistory[]
-}
-
-// Model to link a User to a Song they recognized
-model RecognitionHistory {
-  id           String   @id @default(cuid())
-  recognizedAt DateTime @default(now())
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId       String
-  song         Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
-  songId       String
-}
-
-
-// These models are required by NextAuth.js for its Prisma Adapter
+// Account model - for OAuth providers (Google, etc.)
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -58,21 +41,54 @@ model Account {
   scope             String?
   id_token          String? @db.Text
   session_state     String?
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
   @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
+// Session model - manages user sessions
 model Session {
   id           String   @id @default(cuid())
   sessionToken String   @unique
   userId       String
   expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
 }
 
+// VerificationToken model - for email verification
 model VerificationToken {
   identifier String
   token      String   @unique
   expires    DateTime
+  
   @@unique([identifier, token])
+}
+
+// SearchHistory model - stores song recognition history for each user
+model SearchHistory {
+  id          String   @id @default(cuid())
+  userId      String
+  
+  // Song information
+  title       String
+  artists     String   // Stored as JSON string array
+  album       String
+  releaseDate String?
+  coverUrl    String?  // Album cover image URL
+  duration    Int?     // Duration in seconds
+  label       String?  // Record label
+  
+  // ACRCloud specific data (optional, for reference)
+  acrCloudId  String?  // ACRCloud track ID
+  
+  searchedAt  DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, searchedAt(sort: Desc)])
 }
