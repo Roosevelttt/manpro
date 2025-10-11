@@ -4,14 +4,30 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import Header from '@/components/Header';
 
+// --- Constants ---
 const RECORDING_INTERVAL_MS = 5000;
 const RECOGNITION_TIMEOUT_MS = 25000;
+
+// --- Type Definitions ---
+interface Artist {
+  name: string;
+}
+
+interface Album {
+  name: string;
+}
+
+interface SongResult {
+  title: string;
+  artists: Artist[];
+  album: Album;
+}
 
 export default function HomePage() {
   const { data: session } = useSession();
   const [isRecording, setIsRecording] = useState(false);
   const [isRecognizing, setIsRecognizing] = useState(false);
-  const [result, setResult] = useState<any | null>(null);
+  const [result, setResult] = useState<SongResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -75,7 +91,7 @@ export default function HomePage() {
 
     try {
       const response = await fetch('/api/recognize', { method: 'POST', body: formData });
-      const data = await response.json();
+      const data: SongResult = await response.json();
 
       if (response.ok) {
         setResult(data);
