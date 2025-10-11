@@ -54,7 +54,7 @@ function LoginForm() {
             Welcome Back
           </h1>
           <p className="text-lg" style={{ color: '#EEECFF' }}>
-            Sign in to Sonar
+            Sign in
           </p>
         </div>
 

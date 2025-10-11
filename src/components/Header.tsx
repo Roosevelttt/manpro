@@ -19,7 +19,7 @@ export default function Header() {
           {/* Logo */}
           <Link href="/" className="flex items-center">
             <span className="text-2xl font-bold" style={{ color: '#D1F577' }}>
-              Sonar
+              Find a Song!
             </span>
           </Link>
 

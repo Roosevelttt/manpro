@@ -6,7 +6,7 @@ import SessionProvider from "@/components/SessionProvider";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Sonar - Find a Song!",
+  title: "Find a Song!",
   description: "Identify songs playing around you",
 };
 

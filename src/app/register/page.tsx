@@ -115,7 +115,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold mb-2" style={{ color: '#D1F577' }}>
-            Join Sonar
+            Join Now
           </h1>
           <p className="text-lg" style={{ color: '#EEECFF' }}>
             Create your account to save your music history

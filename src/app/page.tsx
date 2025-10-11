@@ -270,7 +270,7 @@ export default function HomePage() {
       <Header />
       <main className="flex min-h-screen flex-col items-center justify-center p-24 text-center bg-black pt-32">
         <h1 className="text-5xl font-bold mb-4" style={{ color: '#D1F577' }}>
-          Sonar - Find a Song!
+          Find a Song!
         </h1>
         <p className={`text-lg mb-12 ${isRecording && 'animate-pulse'}`} style={{ color: '#EEECFF' }}>
           {getStatusText()}
