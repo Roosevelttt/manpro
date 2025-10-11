@@ -322,15 +322,7 @@ export default function HomePage() {
             <div className="flex items-center justify-between mb-2">
             <h2 className="text-2xl font-bold" style={{ color: '#D1F577' }}>
                 {result.title}
-              </h2>
-              {result.source && (
-              <span className="text-xs px-2 py-1 rounded" style={{
-                backgroundColor: result.source === 'humming' ? '#4A52EB' : '#2D3748',
-                color: '#EEECFF'
-              }}>
-                {result.source === 'humming' ? 'Humming' : 'Music'}
-              </span>
-            )}
+            </h2>
           </div>
           <p className="text-lg mb-1" style={{ color: '#F1F1F3' }}>
               by {result.artists.map((artist: { name: string }) => artist.name).join(', ')}
