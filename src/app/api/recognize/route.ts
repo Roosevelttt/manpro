@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
 import crypto from 'crypto';
 
 export async function POST(req: NextRequest) {
@@ -58,7 +61,33 @@ export async function POST(req: NextRequest) {
     const result = await response.json();
 
     if (result.status && result.status.code === 0 && result.metadata && result.metadata.music.length > 0) {
-      return NextResponse.json(result.metadata.music[0]);
+      const songData = result.metadata.music[0];
+
+      // check log in status
+      const session = await getServerSession(authOptions);
+
+      // save history only if user is logged in
+      if (session && session.user) {
+        try {
+          await prisma.searchHistory.create({
+            data: {
+              userId: session.user.id,
+              title: songData.title,
+              artists: JSON.stringify(songData.artists.map((a: any) => a.name)),
+              album: songData.album.name,
+              releaseDate: songData.release_date || null,
+              coverUrl: songData.album.cover_url || null,
+              duration: songData.duration_ms ? Math.floor(songData.duration_ms / 1000) : null,
+              label: songData.label || null,
+              acrCloudId: songData.acr_id || null,
+            },
+          });
+        } catch (dbError) {
+          console.error('Failed to save to history:', dbError);
+        }
+      }
+
+      return NextResponse.json(songData);
     } else {
       return NextResponse.json({ error: 'No result found.' }, { status: 404 });
     }
