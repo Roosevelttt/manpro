@@ -1,5 +1,10 @@
 'use client';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import {
+  getOptimalAudioConstraints,
+  getSupportedAudioMimeType,
+  checkAudioDecodingSupport
+} from '@/lib/audioUtils';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import Header from '@/components/Header';
@@ -21,6 +26,7 @@ interface SongResult {
   title: string;
   artists: Artist[];
   album: Album;
+  source?: 'music' | 'humming';
 }
 
 export default function HomePage() {
@@ -29,10 +35,134 @@ export default function HomePage() {
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [result, setResult] = useState<SongResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Check audio codec support on mount (for debugging)
+  useEffect(() => {
+    checkAudioDecodingSupport();
+  }, []);
+
+  // Simple audio processing to boost volume
+  const processAudio = async (audioBlob: Blob): Promise<Blob> => {
+    try {
+      // Create audio context
+      const AudioContextConstructor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioContext = new AudioContextConstructor();
+
+      // Convert blob to array buffer
+      const arrayBuffer = await audioBlob.arrayBuffer();
+
+      // Try to decode - if it fails, just return original
+      let audioBuffer: AudioBuffer;
+      try {
+        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      } catch (_e) {
+        console.log('Using original audio (decoding not supported for this format)');
+        await audioContext.close();
+        return audioBlob;
+      }
+
+      // Create offline context for processing
+      const offlineContext = new OfflineAudioContext(
+        audioBuffer.numberOfChannels,
+        audioBuffer.length,
+        audioBuffer.sampleRate
+      );
+
+      // Create source and gain node
+      const source = offlineContext.createBufferSource();
+      source.buffer = audioBuffer;
+
+      const gainNode = offlineContext.createGain();
+      gainNode.gain.value = 3.0; // 3x volume boost
+
+      // Connect nodes
+      source.connect(gainNode);
+      gainNode.connect(offlineContext.destination);
+
+      // Start and render
+      source.start(0);
+      const renderedBuffer = await offlineContext.startRendering();
+
+      // Convert to WAV
+      const wavBlob = audioBufferToWav(renderedBuffer);
+
+      await audioContext.close();
+      console.log('✅ Audio boosted: 3x gain');
+
+      return wavBlob;
+    } catch (error) {
+      console.log('Audio processing failed, using original');
+      return audioBlob;
+    }
+  };
+
+  // Convert AudioBuffer to WAV Blob
+  const audioBufferToWav = (buffer: AudioBuffer): Blob => {
+    const length = buffer.length * buffer.numberOfChannels * 2;
+    const arrayBuffer = new ArrayBuffer(44 + length);
+    const view = new DataView(arrayBuffer);
+    const channels: Float32Array[] = [];
+    let offset = 0;
+    let pos = 0;
+
+    // Write WAV header
+    const setUint16 = (data: number) => {
+      view.setUint16(pos, data, true);
+      pos += 2;
+    };
+    const setUint32 = (data: number) => {
+      view.setUint32(pos, data, true);
+      pos += 4;
+    };
+
+    // RIFF identifier
+    setUint32(0x46464952);
+    // File length
+    setUint32(36 + length);
+    // RIFF type
+    setUint32(0x45564157);
+    // Format chunk identifier
+    setUint32(0x20746d66);
+    // Format chunk length
+    setUint32(16);
+    // Sample format (raw)
+    setUint16(1);
+    // Channel count
+    setUint16(buffer.numberOfChannels);
+    // Sample rate
+    setUint32(buffer.sampleRate);
+    // Byte rate
+    setUint32(buffer.sampleRate * buffer.numberOfChannels * 2);
+    // Block align
+    setUint16(buffer.numberOfChannels * 2);
+    // Bits per sample
+    setUint16(16);
+    // Data chunk identifier
+    setUint32(0x61746164);
+    // Data chunk length
+    setUint32(length);
+
+    // Write interleaved data
+    for (let i = 0; i < buffer.numberOfChannels; i++) {
+      channels.push(buffer.getChannelData(i));
+    }
+
+    while (pos < arrayBuffer.byteLength) {
+      for (let i = 0; i < buffer.numberOfChannels; i++) {
+        let sample = Math.max(-1, Math.min(1, channels[i][offset]));
+        sample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+        view.setInt16(pos, sample, true);
+        pos += 2;
+      }
+      offset++;
+    }
+
+    return new Blob([arrayBuffer], { type: 'audio/wav' });
+  };
 
   const handleStartRecording = async () => {
     setResult(null);
@@ -40,13 +170,28 @@ export default function HomePage() {
     setIsRecognizing(false);
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('Starting recording in auto mode');
+
+      // Use default audio constraints
+      const audioConstraints = getOptimalAudioConstraints(false);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints
+      });
+
       streamRef.current = stream;
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      
-      mediaRecorderRef.current.ondataavailable = (event) => {
+
+      // Get best supported MIME type
+      const mimeType = getSupportedAudioMimeType();
+      const mediaRecorderOptions = mimeType ? { mimeType } : undefined;
+
+      mediaRecorderRef.current = new MediaRecorder(stream, mediaRecorderOptions);
+
+      mediaRecorderRef.current.ondataavailable = async (event) => {
         if (event.data.size > 0 && !result) {
-          recognizeSong(event.data);
+          console.log(`Received audio chunk: ${event.data.type}, ${(event.data.size / 1024).toFixed(2)} KB`);
+
+          const processedBlob = await processAudio(event.data);
+          recognizeSong(processedBlob);
         }
       };
 
@@ -55,7 +200,7 @@ export default function HomePage() {
 
       timeoutRef.current = setTimeout(() => {
         if (mediaRecorderRef.current?.state === 'recording') {
-            setError("Couldn't find a match. Try getting closer to the source!");
+            setError("Couldn't find a match. Try getting closer to the source or humming more clearly!");
             handleStopRecording();
         }
       }, RECOGNITION_TIMEOUT_MS);
@@ -111,7 +256,8 @@ export default function HomePage() {
   const getStatusText = () => {
     if (error) return "";
     if (isRecording) {
-      return isRecognizing ? "Analyzing song..." : "Listening... Keep the song playing!";
+      if (isRecognizing) return "Analyzing...";
+      return "Listening... Play music or hum a tune!";
     }
     if (result) return "Result found!";
     return "Ready to listen";
@@ -173,11 +319,21 @@ export default function HomePage() {
 
         {result && (
           <div className="mt-8 p-6 rounded-lg text-left w-full max-w-md" style={{ backgroundColor: '#1F1F1F' }}>
-            <h2 className="text-2xl font-bold mb-2" style={{ color: '#D1F577' }}>
-              {result.title}
-            </h2>
-            <p className="text-lg mb-1" style={{ color: '#F1F1F3' }}>
-              by {result.artists.map((artist: any) => artist.name).join(', ')}
+            <div className="flex items-center justify-between mb-2">
+            <h2 className="text-2xl font-bold" style={{ color: '#D1F577' }}>
+                {result.title}
+              </h2>
+              {result.source && (
+              <span className="text-xs px-2 py-1 rounded" style={{
+                backgroundColor: result.source === 'humming' ? '#4A52EB' : '#2D3748',
+                color: '#EEECFF'
+              }}>
+                {result.source === 'humming' ? 'Humming' : 'Music'}
+              </span>
+            )}
+          </div>
+          <p className="text-lg mb-1" style={{ color: '#F1F1F3' }}>
+              by {result.artists.map((artist: { name: string }) => artist.name).join(', ')}
             </p>
             <p className="text-md" style={{ color: '#EEECFF', opacity: 0.7 }}>
               Album: {result.album.name}
