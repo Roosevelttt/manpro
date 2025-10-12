@@ -69,12 +69,10 @@ export async function POST(req: NextRequest) {
       optimal: metadata.isOptimalSize && metadata.isOptimalDuration,
     });
 
-    console.log('Trying ACRCloud recognition (music + humming)...');
     const result = await recognizeWithACRCloud(audioBuffer, audioFile.name);
 
     if (result && !result.error) {
       const sourceType = result.source === 'humming' ? 'humming' : 'recorded music';
-      console.log(`Song recognized by ACRCloud (${sourceType})`);
       
       // Save history only if user is logged in
       const session = await getServerSession(authOptions);
@@ -99,7 +97,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 404 });
     }
 
-    console.log('❌ No match found');
     return new NextResponse(null, { status: 204 });
 
   } catch (error) {
@@ -174,7 +171,6 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
       // Check for recorded music first
       if (result.metadata.music && result.metadata.music.length > 0) {
         const songData = result.metadata.music[0];
-        console.log('Found music match:', songData.title);
         
         return {
           title: songData.title,
@@ -191,7 +187,6 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
       // Check for humming recognition
       if (result.metadata.humming && result.metadata.humming.length > 0) {
         const hummingData = result.metadata.humming[0];
-        console.log('Found humming match:', hummingData.title);
         
         return {
           title: hummingData.title,
@@ -203,14 +198,6 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
           },
           source: 'humming'
         };
-      }
-    }
-    
-    // Log more details about why recognition failed
-    if (result.status) {
-      console.log('ACRCloud status code:', result.status.code);
-      if (result.status.msg) {
-        console.log('ACRCloud status message:', result.status.msg);
       }
     }
     

@@ -66,7 +66,6 @@ export default function HomePage() {
         audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
       } catch (decodeError) {
         console.warn('Audio decoding failed:', decodeError);
-        console.log('Using original audio (decoding not supported for this format)');
         await audioContext.close();
         return audioBlob;
       }
@@ -97,12 +96,10 @@ export default function HomePage() {
       const wavBlob = audioBufferToWav(renderedBuffer);
 
       await audioContext.close();
-      console.log('✅ Audio boosted: 3x gain');
 
       return wavBlob;
     } catch (error) {
       console.error('Audio processing failed:', error);
-      console.log('Audio processing failed, using original');
       return audioBlob;
     }
   };
@@ -177,7 +174,6 @@ export default function HomePage() {
     setIsRecognizing(false);
 
     try {
-      console.log('Starting recording in auto mode');
 
       // Use default audio constraints
       const audioConstraints = getOptimalAudioConstraints(false);
@@ -207,25 +203,20 @@ export default function HomePage() {
         }
         
         if (event.data.size > 0) {
-          console.log(`Received audio chunk: ${event.data.type}, ${(event.data.size / 1024).toFixed(2)} KB`);
-
           let processedBlob = event.data;
           
           try {
             const canDecode = await canDecodeAudio(event.data);
             if (canDecode) {
-              console.log('Audio can be decoded, applying volume normalization');
               processedBlob = await normalizeAudioVolume(
                 event.data, 
                 VOLUME_BOOST.MUSIC,
                 false
               );
             } else {
-              console.log('Audio cannot be decoded, attempting WAV conversion');
               try {
                 processedBlob = await convertToWav(event.data);
               } catch (convertError) {
-                console.warn('WAV conversion failed, using original audio:', convertError);
                 processedBlob = event.data;
               }
             }
@@ -286,20 +277,15 @@ export default function HomePage() {
     const formData = new FormData();
     formData.append('sample', audioBlob, 'recording.wav');
 
-    try {
-      console.log(`Sending audio to recognition API: ${audioBlob.type}, ${(audioBlob.size / 1024).toFixed(2)} KB`);
-      
+    try {      
       const response = await fetch('/api/recognize', { method: 'POST', body: formData });
       
       if (response.status === 204) {
-        console.log("No result in this chunk, waiting for the next one...");
         setIsRecognizing(false);
         return;
       }
       
       const data: SongResult = await response.json();
-
-      console.log('Recognition API response:', response.status, data);
 
       if (response.ok && data.title) {
         setResult(data);

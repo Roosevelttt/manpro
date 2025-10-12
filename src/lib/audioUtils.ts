@@ -123,7 +123,6 @@ export function getSupportedAudioMimeType(): string | undefined {
 
   for (const mimeType of mimeTypes) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mimeType)) {
-      console.log(`📹 Using MediaRecorder MIME type: ${mimeType}`);
       return mimeType;
     }
   }
@@ -171,8 +170,6 @@ export async function normalizeAudioVolume(
       return audioBlob;
     }
 
-    // Log blob info for debugging
-    console.log(`Processing audio: ${audioBlob.type}, ${(audioBlob.size / 1024).toFixed(2)} KB`);
     if (audioBlob.type === 'audio/wav') {
       return audioBlob;
     }
@@ -224,8 +221,6 @@ export async function normalizeAudioVolume(
       return audioBlob;
     }
 
-    console.log(`Audio decoded: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.sampleRate}Hz, ${audioBuffer.numberOfChannels}ch`);
-
     // Create offline context for processing
     const offlineContext = new OfflineAudioContext(
       audioBuffer.numberOfChannels,
@@ -258,7 +253,6 @@ export async function normalizeAudioVolume(
       lowShelf.connect(highShelf);
       highShelf.connect(offlineContext.destination);
 
-      console.log('Humming filters applied: Low shelf +6dB @ 1000Hz, High shelf -3dB @ 3000Hz');
     } else {
       // Standard processing for music
       source.connect(gainNode);
@@ -276,8 +270,6 @@ export async function normalizeAudioVolume(
 
     // Close audio context
     await audioContext.close();
-
-    console.log(`✅ Audio processed successfully: ${forHumming ? 'Humming' : 'Music'} mode, ${gainMultiplier}x gain, ${(wavBlob.size / 1024).toFixed(2)} KB WAV`);
 
     return wavBlob;
 
@@ -395,11 +387,8 @@ export async function convertToWav(audioBlob: Blob): Promise<Blob> {
       const wavBlob = await audioBufferToWavBlob(audioBuffer);
       await audioContext.close();
       
-      console.log(`Converted audio to WAV: ${(wavBlob.size / 1024).toFixed(2)} KB`);
       return wavBlob;
-    } catch (decodeError) {
-      console.warn('Failed to decode audio for WAV conversion:', decodeError);
-      
+    } catch (decodeError) {      
       // If decoding fails, try to create a minimal WAV wrapper
       const arrayBuffer = await audioBlob.arrayBuffer();
       if (arrayBuffer.byteLength > 0) {
@@ -485,7 +474,6 @@ export async function canDecodeAudio(audioBlob: Blob): Promise<boolean> {
     await audioContext.close();
     return true;
   } catch (error) {
-    console.warn('Cannot decode audio format:', audioBlob.type, error);
     return false;
   }
 }
