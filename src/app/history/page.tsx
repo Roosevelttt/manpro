@@ -7,6 +7,7 @@ import Header from '@/components/Header';
 import HistorySkeleton from '@/components/HistorySkeleton';
 import Toast from '@/components/Toast';
 import Link from 'next/link';
+import Image from 'next/image';
 
 interface HistoryItem {
   id: string;
@@ -231,10 +232,12 @@ export default function HistoryPage() {
                 >
                   <div className="flex-shrink-0">
                     {item.coverUrl ? (
-                      <img
+                      <Image
                         src={item.coverUrl}
                         alt={item.album}
-                        className="w-20 h-20 rounded object-cover"
+                        width={80}
+                        height={80}
+                        className="rounded object-cover"
                       />
                     ) : (
                       <div className="w-20 h-20 rounded flex items-center justify-center" style={{ backgroundColor: '#4A52EB' }}>
