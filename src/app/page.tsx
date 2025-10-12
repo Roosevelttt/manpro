@@ -14,7 +14,7 @@ import Link from 'next/link';
 import Header from '@/components/Header';
 
 // --- Constants ---
-const RECORDING_INTERVAL_MS = 10000;
+// const RECORDING_INTERVAL_MS = 10000;
 const RECOGNITION_TIMEOUT_MS = 30000;
 
 // --- Type Definitions ---
@@ -50,124 +50,6 @@ export default function HomePage() {
     checkAudioDecodingSupport();
   }, []);
 
-  // Simple audio processing to boost volume
-  const processAudio = async (audioBlob: Blob): Promise<Blob> => {
-    try {
-      // Create audio context
-      const AudioContextConstructor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const audioContext = new AudioContextConstructor();
-
-      // Convert blob to array buffer
-      const arrayBuffer = await audioBlob.arrayBuffer();
-
-      // Try to decode - if it fails, just return original
-      let audioBuffer: AudioBuffer;
-      try {
-        audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      } catch (decodeError) {
-        console.warn('Audio decoding failed:', decodeError);
-        await audioContext.close();
-        return audioBlob;
-      }
-
-      // Create offline context for processing
-      const offlineContext = new OfflineAudioContext(
-        audioBuffer.numberOfChannels,
-        audioBuffer.length,
-        audioBuffer.sampleRate
-      );
-
-      // Create source and gain node
-      const source = offlineContext.createBufferSource();
-      source.buffer = audioBuffer;
-
-      const gainNode = offlineContext.createGain();
-      gainNode.gain.value = 3.0; // 3x volume boost
-
-      // Connect nodes
-      source.connect(gainNode);
-      gainNode.connect(offlineContext.destination);
-
-      // Start and render
-      source.start(0);
-      const renderedBuffer = await offlineContext.startRendering();
-
-      // Convert to WAV
-      const wavBlob = audioBufferToWav(renderedBuffer);
-
-      await audioContext.close();
-
-      return wavBlob;
-    } catch (error) {
-      console.error('Audio processing failed:', error);
-      return audioBlob;
-    }
-  };
-
-  // Convert AudioBuffer to WAV Blob
-  const audioBufferToWav = (buffer: AudioBuffer): Blob => {
-    const length = buffer.length * buffer.numberOfChannels * 2;
-    const arrayBuffer = new ArrayBuffer(44 + length);
-    const view = new DataView(arrayBuffer);
-    const channels: Float32Array[] = [];
-    let offset = 0;
-    let pos = 0;
-
-    // Write WAV header
-    const setUint16 = (data: number) => {
-      view.setUint16(pos, data, true);
-      pos += 2;
-    };
-    const setUint32 = (data: number) => {
-      view.setUint32(pos, data, true);
-      pos += 4;
-    };
-
-    // RIFF identifier
-    setUint32(0x46464952);
-    // File length
-    setUint32(36 + length);
-    // RIFF type
-    setUint32(0x45564157);
-    // Format chunk identifier
-    setUint32(0x20746d66);
-    // Format chunk length
-    setUint32(16);
-    // Sample format (raw)
-    setUint16(1);
-    // Channel count
-    setUint16(buffer.numberOfChannels);
-    // Sample rate
-    setUint32(buffer.sampleRate);
-    // Byte rate
-    setUint32(buffer.sampleRate * buffer.numberOfChannels * 2);
-    // Block align
-    setUint16(buffer.numberOfChannels * 2);
-    // Bits per sample
-    setUint16(16);
-    // Data chunk identifier
-    setUint32(0x61746164);
-    // Data chunk length
-    setUint32(length);
-
-    // Write interleaved data
-    for (let i = 0; i < buffer.numberOfChannels; i++) {
-      channels.push(buffer.getChannelData(i));
-    }
-
-    while (pos < arrayBuffer.byteLength) {
-      for (let i = 0; i < buffer.numberOfChannels; i++) {
-        let sample = Math.max(-1, Math.min(1, channels[i][offset]));
-        sample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-        view.setInt16(pos, sample, true);
-        pos += 2;
-      }
-      offset++;
-    }
-
-    return new Blob([arrayBuffer], { type: 'audio/wav' });
-  };
-
   const handleStartRecording = async () => {
     setResult(null);
     setError(null);
@@ -176,7 +58,7 @@ export default function HomePage() {
     try {
 
       // Use default audio constraints
-      const audioConstraints = getOptimalAudioConstraints(false);
+      const audioConstraints = getOptimalAudioConstraints();
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: audioConstraints
       });
@@ -185,12 +67,10 @@ export default function HomePage() {
 
       // Force WAV format
       let mimeType: string | undefined = 'audio/wav';
-      let useWav = true;
       
       // Check if WAV is supported
       if (!MediaRecorder.isTypeSupported('audio/wav')) {
         mimeType = getSupportedAudioMimeType();
-        useWav = false;
       }
       
       const mediaRecorderOptions = mimeType ? { mimeType } : undefined;
@@ -216,7 +96,7 @@ export default function HomePage() {
             } else {
               try {
                 processedBlob = await convertToWav(event.data);
-              } catch (convertError) {
+              } catch {
                 processedBlob = event.data;
               }
             }

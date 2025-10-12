@@ -89,7 +89,7 @@ export const RECORDING_DURATION = {
  * Audio constraints for getUserMedia optimized for song recognition
  * Uses balanced settings that work well for both music and humming
  */
-export function getOptimalAudioConstraints(_forHumming: boolean = false): MediaTrackConstraints {
+export function getOptimalAudioConstraints(): MediaTrackConstraints {
   const audioConstraints = {
     echoCancellation: false,
     noiseSuppression: false,
@@ -273,16 +273,7 @@ export async function normalizeAudioVolume(
 
     return wavBlob;
 
-  } catch (error) {
-    // Catch-all error handler with proper error serialization
-    const errorDetails = {
-      name: (error as Error)?.name || 'Unknown',
-      message: (error as Error)?.message || String(error),
-      stack: (error as Error)?.stack?.split('\n').slice(0, 3).join('\n') || 'No stack trace'
-    };
-
-    console.error('❌ Unexpected error in audio normalization:', errorDetails);
-    console.error('Full error object:', error);
+  } catch {
 
     // Clean up audio context if it exists
     if (audioContext && audioContext.state !== 'closed') {
@@ -399,8 +390,7 @@ export async function convertToWav(audioBlob: Blob): Promise<Blob> {
       // If all else fails, return original
       throw decodeError;
     }
-  } catch (error) {
-    console.error('Failed to convert to WAV, returning original:', error);
+  } catch {
     return audioBlob;
   }
 }
@@ -473,7 +463,7 @@ export async function canDecodeAudio(audioBlob: Blob): Promise<boolean> {
     await audioContext.decodeAudioData(arrayBuffer);
     await audioContext.close();
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }

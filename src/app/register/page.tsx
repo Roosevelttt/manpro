@@ -77,7 +77,7 @@ export default function RegisterPage() {
         router.refresh();
       }, 2000);
 
-    } catch (error) {
+    } catch {
       setError('An error occurred. Please try again.');
       setIsLoading(false);
     }

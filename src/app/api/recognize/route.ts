@@ -71,9 +71,7 @@ export async function POST(req: NextRequest) {
 
     const result = await recognizeWithACRCloud(audioBuffer, audioFile.name);
 
-    if (result && !result.error) {
-      const sourceType = result.source === 'humming' ? 'humming' : 'recorded music';
-      
+    if (result && !result.error) {      
       // Save history only if user is logged in
       const session = await getServerSession(authOptions);
       if (session && session.user) {
