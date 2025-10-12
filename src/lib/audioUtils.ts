@@ -173,6 +173,9 @@ export async function normalizeAudioVolume(
 
     // Log blob info for debugging
     console.log(`Processing audio: ${audioBlob.type}, ${(audioBlob.size / 1024).toFixed(2)} KB`);
+    if (audioBlob.type === 'audio/wav') {
+      return audioBlob;
+    }
 
     // Create audio context
     const AudioContextConstructor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -373,3 +376,116 @@ async function audioBufferToWavBlob(audioBuffer: AudioBuffer): Promise<Blob> {
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
+export async function convertToWav(audioBlob: Blob): Promise<Blob> {
+  try {
+    if (audioBlob.type === 'audio/wav') {
+      return audioBlob;
+    }
+
+    try {
+      const AudioContextConstructor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioContext = new AudioContextConstructor();
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      
+      if (arrayBuffer.byteLength === 0) {
+        throw new Error('Empty audio buffer');
+      }
+      
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      const wavBlob = await audioBufferToWavBlob(audioBuffer);
+      await audioContext.close();
+      
+      console.log(`Converted audio to WAV: ${(wavBlob.size / 1024).toFixed(2)} KB`);
+      return wavBlob;
+    } catch (decodeError) {
+      console.warn('Failed to decode audio for WAV conversion:', decodeError);
+      
+      // If decoding fails, try to create a minimal WAV wrapper
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      if (arrayBuffer.byteLength > 0) {
+        const wavBlob = createMinimalWav(arrayBuffer);
+        return wavBlob;
+      }
+      
+      // If all else fails, return original
+      throw decodeError;
+    }
+  } catch (error) {
+    console.error('Failed to convert to WAV, returning original:', error);
+    return audioBlob;
+  }
+}
+
+function createMinimalWav(rawAudioData: ArrayBuffer): Blob {
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  
+  // RIFF identifier
+  writeString(view, 0, 'RIFF');
+  // File length (header + data)
+  view.setUint32(4, 36 + rawAudioData.byteLength, true);
+  // RIFF type
+  writeString(view, 8, 'WAVE');
+  // Format chunk identifier
+  writeString(view, 12, 'fmt ');
+  // Format chunk length
+  view.setUint32(16, 16, true);
+  // Sample format (1 = PCM)
+  view.setUint16(20, 1, true);
+  // Channel count (mono)
+  view.setUint16(22, 1, true);
+  // Sample rate (44.1kHz)
+  view.setUint32(24, 44100, true);
+  // Byte rate (sample rate * channels * bits per sample / 8)
+  view.setUint32(28, 44100 * 1 * 16 / 8, true);
+  // Block align (channels * bits per sample / 8)
+  view.setUint16(32, 1 * 16 / 8, true);
+  // Bits per sample
+  view.setUint16(34, 16, true);
+  // Data chunk identifier
+  writeString(view, 36, 'data');
+  // Data chunk length
+  view.setUint32(40, rawAudioData.byteLength, true);
+  
+  // Combine header and data
+  const wavBuffer = new Uint8Array(header.byteLength + rawAudioData.byteLength);
+  wavBuffer.set(new Uint8Array(header), 0);
+  wavBuffer.set(new Uint8Array(rawAudioData), header.byteLength);
+  
+  return new Blob([wavBuffer], { type: 'audio/wav' });
+}
+
+function writeString(view: DataView, offset: number, string: string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
+
+/**
+ * Checks if audio data can be decoded
+ */
+export async function canDecodeAudio(audioBlob: Blob): Promise<boolean> {
+  try {
+    // Quick check for WAV files which should always be decodable
+    if (audioBlob.type === 'audio/wav') {
+      return true;
+    }
+    
+    const AudioContextConstructor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const audioContext = new AudioContextConstructor();
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    
+    // If array buffer is empty, can't decode
+    if (arrayBuffer.byteLength === 0) {
+      await audioContext.close();
+      return false;
+    }
+    
+    await audioContext.decodeAudioData(arrayBuffer);
+    await audioContext.close();
+    return true;
+  } catch (error) {
+    console.warn('Cannot decode audio format:', audioBlob.type, error);
+    return false;
+  }
+}

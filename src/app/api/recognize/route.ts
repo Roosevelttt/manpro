@@ -26,8 +26,19 @@ interface ACRCloudMusicMetadata {
 }
 
 interface ACRCloudResponse {
-  status?: { code: number };
-  metadata?: { music: ACRCloudMusicMetadata[] };
+  status?: { 
+    code: number;
+    msg?: string;
+  };
+  metadata?: { 
+    music: ACRCloudMusicMetadata[];
+    humming?: Array<{
+      title: string;
+      artists: Array<{ name: string }>;
+      album: { name: string };
+      score?: string;
+    }>;
+  };
   error?: string;
 }
 
@@ -89,9 +100,7 @@ export async function POST(req: NextRequest) {
     }
 
     console.log('❌ No match found');
-    return NextResponse.json({
-      error: 'No result found. Try:\n• Recording for 10-15 seconds\n• Getting closer to the music source\n• Humming more clearly and on-pitch'
-    }, { status: 404 });
+    return new NextResponse(null, { status: 204 });
 
   } catch (error) {
     console.error('❌ Recognition error:', error);
@@ -157,19 +166,55 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
     });
 
     const result: ACRCloudResponse = await response.json();
+    
+    console.log('ACRCloud response status:', response.status);
+    console.log('ACRCloud response data:', JSON.stringify(result, null, 2));
 
-    if (result.status && result.status.code === 0 && result.metadata && result.metadata.music.length > 0) {
-      const songData = result.metadata.music[0];
+    if (result.status && result.status.code === 0 && result.metadata) {
+      // Check for recorded music first
+      if (result.metadata.music && result.metadata.music.length > 0) {
+        const songData = result.metadata.music[0];
+        console.log('Found music match:', songData.title);
+        
+        return {
+          title: songData.title,
+          artists: songData.artists,
+          album: { name: songData.album.name },
+          external_metadata: {
+            ...songData,
+            album: songData.album
+          },
+          source: 'music'
+        };
+      }
       
-      return {
-        title: songData.title,
-        artists: songData.artists,
-        album: { name: songData.album.name },
-        source: 'music'
-      };
-    } else {
-      return null;
+      // Check for humming recognition
+      if (result.metadata.humming && result.metadata.humming.length > 0) {
+        const hummingData = result.metadata.humming[0];
+        console.log('Found humming match:', hummingData.title);
+        
+        return {
+          title: hummingData.title,
+          artists: hummingData.artists,
+          album: { name: hummingData.album.name },
+          external_metadata: {
+            ...hummingData,
+            album: hummingData.album
+          },
+          source: 'humming'
+        };
+      }
     }
+    
+    // Log more details about why recognition failed
+    if (result.status) {
+      console.log('ACRCloud status code:', result.status.code);
+      if (result.status.msg) {
+        console.log('ACRCloud status message:', result.status.msg);
+      }
+    }
+    
+    return null;
   } catch (error) {
     console.error('ACRCloud recognition error:', error);
     return { 

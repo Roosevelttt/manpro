@@ -3,15 +3,19 @@ import { useState, useRef, useEffect } from 'react';
 import {
   getOptimalAudioConstraints,
   getSupportedAudioMimeType,
-  checkAudioDecodingSupport
+  checkAudioDecodingSupport,
+  normalizeAudioVolume,
+  VOLUME_BOOST,
+  convertToWav,
+  canDecodeAudio
 } from '@/lib/audioUtils';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import Header from '@/components/Header';
 
 // --- Constants ---
-const RECORDING_INTERVAL_MS = 5000;
-const RECOGNITION_TIMEOUT_MS = 25000;
+const RECORDING_INTERVAL_MS = 10000;
+const RECOGNITION_TIMEOUT_MS = 30000;
 
 // --- Type Definitions ---
 interface Artist {
@@ -27,6 +31,7 @@ interface SongResult {
   artists: Artist[];
   album: Album;
   source?: 'music' | 'humming';
+  error?: string;
 }
 
 export default function HomePage() {
@@ -59,7 +64,8 @@ export default function HomePage() {
       let audioBuffer: AudioBuffer;
       try {
         audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      } catch (_e) {
+      } catch (decodeError) {
+        console.warn('Audio decoding failed:', decodeError);
         console.log('Using original audio (decoding not supported for this format)');
         await audioContext.close();
         return audioBlob;
@@ -95,6 +101,7 @@ export default function HomePage() {
 
       return wavBlob;
     } catch (error) {
+      console.error('Audio processing failed:', error);
       console.log('Audio processing failed, using original');
       return audioBlob;
     }
@@ -180,29 +187,74 @@ export default function HomePage() {
 
       streamRef.current = stream;
 
-      // Get best supported MIME type
-      const mimeType = getSupportedAudioMimeType();
+      // Force WAV format
+      let mimeType: string | undefined = 'audio/wav';
+      let useWav = true;
+      
+      // Check if WAV is supported
+      if (!MediaRecorder.isTypeSupported('audio/wav')) {
+        mimeType = getSupportedAudioMimeType();
+        useWav = false;
+      }
+      
       const mediaRecorderOptions = mimeType ? { mimeType } : undefined;
 
       mediaRecorderRef.current = new MediaRecorder(stream, mediaRecorderOptions);
 
       mediaRecorderRef.current.ondataavailable = async (event) => {
-        if (event.data.size > 0 && !result) {
+        if (result) {
+          return;
+        }
+        
+        if (event.data.size > 0) {
           console.log(`Received audio chunk: ${event.data.type}, ${(event.data.size / 1024).toFixed(2)} KB`);
 
-          const processedBlob = await processAudio(event.data);
-          recognizeSong(processedBlob);
+          let processedBlob = event.data;
+          
+          try {
+            const canDecode = await canDecodeAudio(event.data);
+            if (canDecode) {
+              console.log('Audio can be decoded, applying volume normalization');
+              processedBlob = await normalizeAudioVolume(
+                event.data, 
+                VOLUME_BOOST.MUSIC,
+                false
+              );
+            } else {
+              console.log('Audio cannot be decoded, attempting WAV conversion');
+              try {
+                processedBlob = await convertToWav(event.data);
+              } catch (convertError) {
+                console.warn('WAV conversion failed, using original audio:', convertError);
+                processedBlob = event.data;
+              }
+            }
+          } catch (processingError) {
+            console.warn('Audio processing failed, using original audio:', processingError);
+            processedBlob = event.data;
+          }
+          
+          if (!result) {
+            recognizeSong(processedBlob);
+          }
         }
       };
 
-      mediaRecorderRef.current.start(RECORDING_INTERVAL_MS);
+      mediaRecorderRef.current.start(10000);
       setIsRecording(true);
 
+      // Clear timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+
       timeoutRef.current = setTimeout(() => {
-        if (mediaRecorderRef.current?.state === 'recording') {
-            setError("Couldn't find a match. Try getting closer to the source or humming more clearly!");
-            handleStopRecording();
+        if (result) {
+          return;
         }
+        
+        setError("Couldn't find a match. Try getting closer to the source or humming more clearly!");
+        handleStopRecording();
       }, RECOGNITION_TIMEOUT_MS);
 
     } catch (err) {
@@ -235,18 +287,32 @@ export default function HomePage() {
     formData.append('sample', audioBlob, 'recording.wav');
 
     try {
+      console.log(`Sending audio to recognition API: ${audioBlob.type}, ${(audioBlob.size / 1024).toFixed(2)} KB`);
+      
       const response = await fetch('/api/recognize', { method: 'POST', body: formData });
+      
+      if (response.status === 204) {
+        console.log("No result in this chunk, waiting for the next one...");
+        setIsRecognizing(false);
+        return;
+      }
+      
       const data: SongResult = await response.json();
 
-      if (response.ok) {
+      console.log('Recognition API response:', response.status, data);
+
+      if (response.ok && data.title) {
         setResult(data);
         handleStopRecording();
-      } else {
-        console.log("No result in this chunk, waiting for the next one...");
+      } else if (data.error && !result) {
+        setError(data.error);
+        handleStopRecording();
       }
     } catch (err) {
       console.error("Recognition error:", err);
-      setError('An error occurred during recognition.');
+      if (!result) {
+        setError('An error occurred during recognition.');
+      }
       handleStopRecording();
     } finally {
       setIsRecognizing(false);
