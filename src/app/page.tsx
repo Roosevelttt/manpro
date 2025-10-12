@@ -18,13 +18,8 @@ import Header from '@/components/Header';
 const RECOGNITION_TIMEOUT_MS = 30000;
 
 // --- Type Definitions ---
-interface Artist {
-  name: string;
-}
-
-interface Album {
-  name: string;
-}
+interface Artist { name: string }
+interface Album { name: string }
 
 interface SongResult {
   title: string;
@@ -32,14 +27,26 @@ interface SongResult {
   album: Album;
   source?: 'music' | 'humming';
   error?: string;
+  spotifyId?: string;
+}
+
+interface Recommendation {
+  title: string;
+  artists: Artist[];
+  album: Album;
+  spotifyId: string;
+  preview_url: string | null;
+  spotifyUrl: string; // <-- camelCase & wajib ada
 }
 
 export default function HomePage() {
   const { data: session } = useSession();
   const [isRecording, setIsRecording] = useState(false);
   const [isRecognizing, setIsRecognizing] = useState(false);
+  const [isLoadingRecs, setIsLoadingRecs] = useState(false);
   const [result, setResult] = useState<SongResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -50,10 +57,12 @@ export default function HomePage() {
     checkAudioDecodingSupport();
   }, []);
 
+  // --- Start Recording ---
   const handleStartRecording = async () => {
     setResult(null);
     setError(null);
     setIsRecognizing(false);
+    setRecommendations([]);
 
     try {
 
@@ -127,29 +136,29 @@ export default function HomePage() {
         setError("Couldn't find a match. Try getting closer to the source or humming more clearly!");
         handleStopRecording();
       }, RECOGNITION_TIMEOUT_MS);
-
     } catch (err) {
       console.error("Error accessing microphone:", err);
       setError("Microphone access denied. Please allow access in your browser settings.");
     }
   };
 
+  // --- Stop Recording ---
   const handleStopRecording = () => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach((track) => track.stop());
     }
     setIsRecording(false);
     setIsRecognizing(false);
   };
 
+  // --- Recognize Song via API ---
   const recognizeSong = async (audioBlob: Blob) => {
     if (isRecognizing || result) return;
 
@@ -170,9 +179,13 @@ export default function HomePage() {
       if (response.ok && data.title) {
         setResult(data);
         handleStopRecording();
-      } else if (data.error && !result) {
-        setError(data.error);
-        handleStopRecording();
+        // pakai title + artist utk /api/similarity (Last.fm proxy)
+        if (data.title && data.artists?.length) {
+          setIsLoadingRecs(true);
+          await fetchRecommendations(data.title, data.artists[0].name);
+        }
+      } else {
+        console.log("No result in this chunk, waiting for the next one...");
       }
     } catch (err) {
       console.error("Recognition error:", err);
@@ -182,20 +195,38 @@ export default function HomePage() {
       handleStopRecording();
     } finally {
       setIsRecognizing(false);
+      setIsLoadingRecs(false);
     }
   };
 
+  // --- Fetch Recommendations (Last.fm -> Spotify) ---
+  const fetchRecommendations = async (title: string, artistName: string) => {
+    try {
+      const qs = new URLSearchParams({ track: title, artist: artistName });
+      const res = await fetch(`/api/similarity?${qs.toString()}`);
+      const recs: Recommendation[] = await res.json();
+      if (res.ok) {
+        setRecommendations(recs);
+      } else {
+        console.error('Similarity (Last.fm) error:', recs);
+      }
+    } catch (err) {
+      console.error('Failed to fetch recommendations:', err);
+    }
+  };
+
+  // --- Status Text ---
   const getStatusText = () => {
-    if (error) return "";
+    if (error) return '';
     if (isRecording) {
       if (isRecognizing) return "Analyzing...";
       return "Listening... Play music or hum a tune!";
     }
-    if (result) return "Result found!";
-    return "Ready to listen";
-  }
+    if (result) return 'Result found!';
+    return 'Ready to listen';
+  };
 
-  const buttonColor = error ? '#EF4444' : (isRecording ? '#4A52EB' : '#4A52EB');
+  const buttonColor = error ? '#EF4444' : '#4A52EB';
 
   return (
     <>
@@ -271,6 +302,50 @@ export default function HomePage() {
           </div>
         )}
         
+
+        {/* Recommendations */}
+        {(isLoadingRecs || recommendations.length > 0) && (
+          <div className="mt-8 w-full max-w-2xl">
+            <h3 className="text-xl font-bold mb-4" style={{ color: '#D1F577' }}>
+              {isLoadingRecs ? 'Finding recommendations…' : 'You may also like:'}
+            </h3>
+
+            {!isLoadingRecs && recommendations.length === 0 && (
+              <p className="text-sm" style={{ color: '#EEECFF', opacity: 0.7 }}>
+                No recommendations found.
+              </p>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {recommendations.map((rec) => (
+                <div key={rec.spotifyId} className="p-4 rounded-lg" style={{ backgroundColor: '#1F1F1F' }}>
+                  <h4 className="font-semibold text-lg mb-1" style={{ color: '#EEECFF' }}>{rec.title}</h4>
+                  <p className="text-sm mb-1" style={{ color: '#F1F1F3' }}>
+                    by {rec.artists.map((a) => a.name).join(', ')}
+                  </p>
+                  <p className="text-sm" style={{ color: '#EEECFF', opacity: 0.7 }}>
+                    Album: {rec.album.name}
+                  </p>
+
+                  {/* Link ke Spotify */}
+                  <a
+                    href={rec.spotifyUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-green-400 underline mt-2 inline-block"
+                  >
+                    Open in Spotify
+                  </a>
+
+                  {rec.preview_url && (
+                    <audio controls className="w-full mt-3" src={rec.preview_url}></audio>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {error && (
           <p className="mt-4 text-lg font-medium" style={{ color: '#EF4444' }}>
             {error}

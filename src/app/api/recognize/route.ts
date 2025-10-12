@@ -13,6 +13,8 @@ interface SongResult {
   source: 'music' | 'humming';
   score?: string;
   error?: string;
+  spotifyId?: string | null;
+  recommendations?: Recommendation[];
 }
 
 interface ACRCloudMusicMetadata {
@@ -42,11 +44,145 @@ interface ACRCloudResponse {
   error?: string;
 }
 
+// ================== ENV ==================
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID!;
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET!;
+// const ACRCLOUD_HOST = process.env.ACRCLOUD_HOST!;
+// const ACRCLOUD_ACCESS_KEY = process.env.ACRCLOUD_ACCESS_KEY!;
+// const ACRCLOUD_ACCESS_SECRET = process.env.ACRCLOUD_ACCESS_SECRET!;
+
+// ================== TYPES ==================
+interface SpotifyArtist {
+  id: string;
+  name: string;
+}
+interface SpotifyResolveResult {
+  spotifyId: string | null;
+  artistId: string | null;
+}
+
+interface SpotifyAlbum {
+  name: string;
+}
+interface SpotifyTrack {
+  id: string;
+  name: string;
+  artists: SpotifyArtist[];
+  album: SpotifyAlbum;
+  preview_url: string | null;
+}
+interface SpotifySearchResponse {
+  tracks: {
+    items: SpotifyTrack[];
+  };
+}
+interface SpotifyRecommendationsResponse {
+  tracks: SpotifyTrack[];
+}
+
+interface AcrArtist {
+  name: string;
+}
+interface AcrAlbum {
+  name: string;
+}
+interface AcrMusic {
+  title: string;
+  artists: AcrArtist[];
+  album?: AcrAlbum;
+}
+
+interface Recommendation {
+  title: string;
+  artists: { name: string }[];
+  album: { name: string };
+  spotifyId: string;
+  preview_url: string | null;
+}
+
+// ================== SPOTIFY UTILS ==================
+async function getSpotifyAccessToken(): Promise<string> {
+  const authString = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${authString}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials',
+    cache: 'no-store',
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(`Spotify Auth Error: ${data.error_description || res.statusText}`);
+  return data.access_token as string;
+}
+
+async function resolveSpotifyTrack(title: string, artist: string, token: string): Promise<SpotifyResolveResult> {
+  const q = `track:"${title}" artist:"${artist}"`;
+  const res = await fetch(
+    `https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=1&market=ID`,
+    { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }
+  );
+
+  if (!res.ok) {
+    console.error("[Spotify] search error:", res.status);
+    return { spotifyId: null, artistId: null };
+  }
+
+  const data: SpotifySearchResponse = await res.json();
+  if (data?.tracks?.items?.length > 0) {
+    const track = data.tracks.items[0];
+    return {
+      spotifyId: track.id,
+      artistId: track.artists?.[0]?.id ?? null,
+    };
+  }
+
+  return { spotifyId: null, artistId: null };
+}
+
+async function getRecommendations(trackId: string, token: string, artistId?: string): Promise<Recommendation[]> {
+  try {
+    const params = new URLSearchParams();
+    params.set("limit", "5");
+    params.set("market", "ID");
+
+    if (trackId) params.set("seed_tracks", trackId);
+    if (artistId) params.set("seed_artists", artistId);
+
+    const url = `https://api.spotify.com/v1/recommendations?${params.toString()}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+
+    const txt = await res.text();
+    console.log("[Spotify Raw Recommendations]", txt);
+
+    if (!res.ok) {
+      console.error("[Spotify] Recommendation request failed:", res.status, txt);
+      return [];
+    }
+
+    const parsed = JSON.parse(txt) as SpotifyRecommendationsResponse;
+    return (parsed.tracks ?? []).map((t) => ({
+      title: t.name,
+      artists: t.artists.map((a) => ({ name: a.name })),
+      album: { name: t.album.name },
+      spotifyId: t.id,
+      preview_url: t.preview_url,
+    }));
+  } catch (err) {
+    console.error("[Spotify] getRecommendations error:", err);
+    return [];
+  }
+}
+
+// ================== MAIN HANDLER ==================
 export async function POST(req: NextRequest) {
   try {
-    const data = await req.formData();
-    const audioFile = data.get('sample') as File | null;
-
+    const formData = await req.formData();
+    const audioFile = formData.get('sample') as File | null;
     if (!audioFile) {
       return NextResponse.json({ error: 'No audio file found.' }, { status: 400 });
     }
@@ -138,6 +274,7 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
       timestamp,
     ].join('\n');
 
+    
     // Create HMAC-SHA1 signature
     const signature = crypto
       .createHmac('sha1', accessSecret)
@@ -166,6 +303,20 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
     console.log('ACRCloud response data:', JSON.stringify(result, null, 2));
 
     if (result.status && result.status.code === 0 && result.metadata) {
+      const music = result.metadata.music[0];
+      const title = music.title;
+      const artist = music.artists[0].name;
+      const album = music.album?.name || '';
+
+      const token = await getSpotifyAccessToken();
+      const { spotifyId, artistId } = await resolveSpotifyTrack(title, artist, token);
+      console.log("[Recognize] SpotifyId:", spotifyId, "| ArtistId:", artistId);
+
+      let recommendations: Recommendation[] = [];
+      if (spotifyId) {
+        recommendations = await getRecommendations(spotifyId, token, artistId ?? undefined);
+      }
+
       // Check for recorded music first
       if (result.metadata.music && result.metadata.music.length > 0) {
         const songData = result.metadata.music[0];
@@ -178,7 +329,9 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
             ...songData,
             album: songData.album
           },
-          source: 'music'
+          source: 'music',
+          spotifyId,
+          recommendations
         };
       }
       
@@ -194,7 +347,9 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
             ...hummingData,
             album: hummingData.album
           },
-          source: 'humming'
+          source: 'humming',
+          spotifyId,
+          recommendations
         };
       }
     }
@@ -207,7 +362,7 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
       artists: [], 
       album: { name: '' }, 
       source: 'music',
-      error: 'Recognition failed due to an internal error' 
+      error: 'Recognition failed due to an internal error', 
     };
   }
 }
