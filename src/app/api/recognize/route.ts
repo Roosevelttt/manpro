@@ -303,24 +303,23 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
     console.log('ACRCloud response data:', JSON.stringify(result, null, 2));
 
     if (result.status && result.status.code === 0 && result.metadata) {
-      const music = result.metadata.music[0];
-      const title = music.title;
-      const artist = music.artists[0].name;
-      const album = music.album?.name || '';
-
       const token = await getSpotifyAccessToken();
-      const { spotifyId, artistId } = await resolveSpotifyTrack(title, artist, token);
-      console.log("[Recognize] SpotifyId:", spotifyId, "| ArtistId:", artistId);
-
-      let recommendations: Recommendation[] = [];
-      if (spotifyId) {
-        recommendations = await getRecommendations(spotifyId, token, artistId ?? undefined);
-      }
 
       // Check for recorded music first
       if (result.metadata.music && result.metadata.music.length > 0) {
         const songData = result.metadata.music[0];
+        const title = songData.title;
+        const artist = songData.artists[0].name;
+        // const album = music.album?.name || '';
+
         
+        const { spotifyId, artistId } = await resolveSpotifyTrack(title, artist, token);
+        console.log("[Recognize] SpotifyId:", spotifyId, "| ArtistId:", artistId);
+
+        const recommendations = spotifyId
+          ? await getRecommendations(spotifyId, token, artistId ?? undefined)
+          : [];
+
         return {
           title: songData.title,
           artists: songData.artists,
@@ -337,8 +336,14 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
       
       // Check for humming recognition
       if (result.metadata.humming && result.metadata.humming.length > 0) {
-        const hummingData = result.metadata.humming[0];
-        
+        const hummingData = result.metadata.humming[0];    
+        const title = hummingData.title;
+        const artist = hummingData.artists[0]?.name ?? '';
+
+        const { spotifyId, artistId } = await resolveSpotifyTrack(title, artist, token);
+        const recommendations = spotifyId
+          ? await getRecommendations(spotifyId, token, artistId ?? undefined)
+          : [];
         return {
           title: hummingData.title,
           artists: hummingData.artists,
