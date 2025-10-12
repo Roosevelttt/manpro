@@ -80,18 +80,6 @@ interface SpotifyRecommendationsResponse {
   tracks: SpotifyTrack[];
 }
 
-interface AcrArtist {
-  name: string;
-}
-interface AcrAlbum {
-  name: string;
-}
-interface AcrMusic {
-  title: string;
-  artists: AcrArtist[];
-  album?: AcrAlbum;
-}
-
 interface Recommendation {
   title: string;
   artists: { name: string }[];
