@@ -1,12 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
 import crypto from 'crypto';
+import { validateAudioBuffer, analyzeAudioBuffer } from '@/lib/audioUtils';
+
+interface SongResult {
+  title: string;
+  artists: Array<{ name: string }>;
+  album: { name: string };
+  external_metadata?: Record<string, unknown>;
+  source: 'music' | 'humming';
+  score?: string;
+  error?: string;
+  spotifyId?: string | null;
+  recommendations?: Recommendation[];
+}
+
+interface ACRCloudMusicMetadata {
+  title: string;
+  artists: Array<{ name: string }>;
+  album: { name: string; cover_url?: string };
+  release_date?: string;
+  duration_ms?: number;
+  label?: string;
+  acr_id?: string;
+}
+
+interface ACRCloudResponse {
+  status?: { 
+    code: number;
+    msg?: string;
+  };
+  metadata?: { 
+    music: ACRCloudMusicMetadata[];
+    humming?: Array<{
+      title: string;
+      artists: Array<{ name: string }>;
+      album: { name: string };
+      score?: string;
+    }>;
+  };
+  error?: string;
+}
 
 // ================== ENV ==================
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID!;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET!;
-const ACRCLOUD_HOST = process.env.ACRCLOUD_HOST!;
-const ACRCLOUD_ACCESS_KEY = process.env.ACRCLOUD_ACCESS_KEY!;
-const ACRCLOUD_ACCESS_SECRET = process.env.ACRCLOUD_ACCESS_SECRET!;
+// const ACRCLOUD_HOST = process.env.ACRCLOUD_HOST!;
+// const ACRCLOUD_ACCESS_KEY = process.env.ACRCLOUD_ACCESS_KEY!;
+// const ACRCLOUD_ACCESS_SECRET = process.env.ACRCLOUD_ACCESS_SECRET!;
 
 // ================== TYPES ==================
 interface SpotifyArtist {
@@ -47,12 +90,6 @@ interface AcrMusic {
   title: string;
   artists: AcrArtist[];
   album?: AcrAlbum;
-}
-interface AcrResponse {
-  status: { code: number };
-  metadata?: {
-    music?: AcrMusic[];
-  };
 }
 
 interface Recommendation {
@@ -141,14 +178,6 @@ async function getRecommendations(trackId: string, token: string, artistId?: str
   }
 }
 
-// ================== ACRCLOUD UTILS ==================
-function buildAcrSignature(accessKey: string, accessSecret: string, timestamp: string): string {
-  const dataType = 'audio';
-  const signatureVersion = '1';
-  const stringToSign = ['POST', '/v1/identify', accessKey, dataType, signatureVersion, timestamp].join('\n');
-  return crypto.createHmac('sha1', accessSecret).update(Buffer.from(stringToSign, 'utf-8')).digest('base64');
-}
-
 // ================== MAIN HANDLER ==================
 export async function POST(req: NextRequest) {
   try {
@@ -158,27 +187,123 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No audio file found.' }, { status: 400 });
     }
 
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const signature = buildAcrSignature(ACRCLOUD_ACCESS_KEY, ACRCLOUD_ACCESS_SECRET, timestamp);
-
+    // Convert audio file to buffer
     const audioBuffer = Buffer.from(await audioFile.arrayBuffer());
 
-    const acrFormData = new FormData();
-    acrFormData.append('sample', new Blob([audioBuffer]), audioFile.name);
-    acrFormData.append('access_key', ACRCLOUD_ACCESS_KEY);
-    acrFormData.append('data_type', 'audio');
-    acrFormData.append('signature_version', '1');
-    acrFormData.append('signature', signature);
-    acrFormData.append('timestamp', timestamp);
+    // Validate audio buffer meets requirements
+    const validation = validateAudioBuffer(audioBuffer);
+    if (!validation.valid) {
+      console.warn('Audio validation failed:', validation.reason);
+      return NextResponse.json({ error: validation.reason }, { status: 400 });
+    }
 
-    const acrResponse = await fetch(`https://${ACRCLOUD_HOST}/v1/identify`, {
-      method: 'POST',
-      body: acrFormData,
+    // Analyze audio for logging and optimization insights
+    const metadata = analyzeAudioBuffer(audioBuffer);
+    console.log('Audio metadata:', {
+      size: `${(metadata.size / 1024).toFixed(2)}KB`,
+      duration: `${metadata.duration.toFixed(2)}s`,
+      optimal: metadata.isOptimalSize && metadata.isOptimalDuration,
     });
-    const acrResult: AcrResponse = await acrResponse.json();
 
-    if (acrResult.status?.code === 0 && acrResult.metadata?.music?.length) {
-      const music = acrResult.metadata.music[0];
+    const result = await recognizeWithACRCloud(audioBuffer, audioFile.name);
+
+    if (result && !result.error) {      
+      // Save history only if user is logged in
+      const session = await getServerSession(authOptions);
+      if (session && session.user) {
+        try {
+          await prisma.searchHistory.create({
+            data: {
+              userId: session.user.id,
+              title: result.title,
+              artists: JSON.stringify(result.artists.map(a => a.name)),
+              album: result.album.name,
+              // Other fields would go here if needed
+            },
+          });
+        } catch (dbError) {
+          console.error('Failed to save to history:', dbError);
+        }
+      }
+      
+      return NextResponse.json(result);
+    } else if (result && result.error) {
+      return NextResponse.json({ error: result.error }, { status: 404 });
+    }
+
+    return new NextResponse(null, { status: 204 });
+
+  } catch (error) {
+    console.error('❌ Recognition error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+/**
+ * Recognize song using ACRCloud API
+ * Implements ACRCloud Identification Protocol V1
+ */
+async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Promise<SongResult | null> {
+  const host = process.env.ACRCLOUD_HOST;
+  const accessKey = process.env.ACRCLOUD_ACCESS_KEY;
+  const accessSecret = process.env.ACRCLOUD_ACCESS_SECRET;
+
+  if (!host || !accessKey || !accessSecret) {
+    console.error('ACRCloud credentials not configured');
+    return { 
+      title: '', 
+      artists: [], 
+      album: { name: '' }, 
+      source: 'music',
+      error: 'ACRCloud credentials are not configured.' 
+    };
+  }
+
+  try {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const dataType = 'audio';
+    const signatureVersion = '1';
+
+    // Create signature string (ACRCloud Protocol V1)
+    const stringToSign = [
+      'POST',
+      `/v1/identify`,
+      accessKey,
+      dataType,
+      signatureVersion,
+      timestamp,
+    ].join('\n');
+
+    
+    // Create HMAC-SHA1 signature
+    const signature = crypto
+      .createHmac('sha1', accessSecret)
+      .update(Buffer.from(stringToSign, 'utf-8'))
+      .digest('base64');
+
+    // Prepare multipart form data
+    const formData = new FormData();
+    formData.append('sample', new Blob([new Uint8Array(audioBuffer)]), fileName);
+    formData.append('sample_bytes', audioBuffer.length.toString());
+    formData.append('access_key', accessKey);
+    formData.append('data_type', dataType);
+    formData.append('signature_version', signatureVersion);
+    formData.append('signature', signature);
+    formData.append('timestamp', timestamp);
+
+    // Send request to ACRCloud
+    const response = await fetch(`https://${host}/v1/identify`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    const result: ACRCloudResponse = await response.json();
+    
+    console.log('ACRCloud response status:', response.status);
+    console.log('ACRCloud response data:', JSON.stringify(result, null, 2));
+
+    if (result.status && result.status.code === 0 && result.metadata) {
+      const music = result.metadata.music[0];
       const title = music.title;
       const artist = music.artists[0].name;
       const album = music.album?.name || '';
@@ -192,21 +317,52 @@ export async function POST(req: NextRequest) {
         recommendations = await getRecommendations(spotifyId, token, artistId ?? undefined);
       }
 
-      const payload = {
-        title,
-        artists: music.artists,
-        album: { name: album },
-        spotifyId,
-        recommendations,
-      };
-      console.log("[Recognize] Final JSON payload:", JSON.stringify(payload, null, 2));
-
-      return NextResponse.json(payload);
-    } else {
-      return NextResponse.json({ error: 'No result found.' }, { status: 404 });
+      // Check for recorded music first
+      if (result.metadata.music && result.metadata.music.length > 0) {
+        const songData = result.metadata.music[0];
+        
+        return {
+          title: songData.title,
+          artists: songData.artists,
+          album: { name: songData.album.name },
+          external_metadata: {
+            ...songData,
+            album: songData.album
+          },
+          source: 'music',
+          spotifyId,
+          recommendations
+        };
+      }
+      
+      // Check for humming recognition
+      if (result.metadata.humming && result.metadata.humming.length > 0) {
+        const hummingData = result.metadata.humming[0];
+        
+        return {
+          title: hummingData.title,
+          artists: hummingData.artists,
+          album: { name: hummingData.album.name },
+          external_metadata: {
+            ...hummingData,
+            album: hummingData.album
+          },
+          source: 'humming',
+          spotifyId,
+          recommendations
+        };
+      }
     }
+    
+    return null;
   } catch (error) {
-    console.error('Recognition Error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    console.error('ACRCloud recognition error:', error);
+    return { 
+      title: '', 
+      artists: [], 
+      album: { name: '' }, 
+      source: 'music',
+      error: 'Recognition failed due to an internal error', 
+    };
   }
 }
