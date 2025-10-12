@@ -51,6 +51,16 @@ export default function HomePage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const resultRef = useRef<SongResult | null>(null);
+  const isRecognizingRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    resultRef.current = result;
+  }, [result]);
+
+  useEffect(() => {
+    isRecognizingRef.current = isRecognizing;
+  }, [isRecognizing]);
 
   // Check audio codec support on mount (for debugging)
   useEffect(() => {
@@ -60,8 +70,10 @@ export default function HomePage() {
   // --- Start Recording ---
   const handleStartRecording = async () => {
     setResult(null);
+    resultRef.current = null;
     setError(null);
     setIsRecognizing(false);
+    isRecognizingRef.current = false;  
     setRecommendations([]);
 
     try {
@@ -87,7 +99,7 @@ export default function HomePage() {
       mediaRecorderRef.current = new MediaRecorder(stream, mediaRecorderOptions);
 
       mediaRecorderRef.current.ondataavailable = async (event) => {
-        if (result) {
+        if (resultRef.current) {
           return;
         }
         
@@ -114,7 +126,7 @@ export default function HomePage() {
             processedBlob = event.data;
           }
           
-          if (!result) {
+          if (!resultRef.current) {
             recognizeSong(processedBlob);
           }
         }
@@ -160,9 +172,10 @@ export default function HomePage() {
 
   // --- Recognize Song via API ---
   const recognizeSong = async (audioBlob: Blob) => {
-    if (isRecognizing || result) return;
+    if (isRecognizingRef.current || resultRef.current) return;
 
     setIsRecognizing(true);
+    isRecognizingRef.current = true;
     const formData = new FormData();
     formData.append('sample', audioBlob, 'recording.wav');
 
@@ -178,6 +191,7 @@ export default function HomePage() {
 
       if (response.ok && data.title) {
         setResult(data);
+        resultRef.current = data;
         handleStopRecording();
         // pakai title + artist utk /api/similarity (Last.fm proxy)
         if (data.title && data.artists?.length) {
@@ -195,6 +209,7 @@ export default function HomePage() {
       handleStopRecording();
     } finally {
       setIsRecognizing(false);
+      isRecognizingRef.current = false;
       setIsLoadingRecs(false);
     }
   };
