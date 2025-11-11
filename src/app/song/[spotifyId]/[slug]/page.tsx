@@ -4,12 +4,13 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Header from '@/components/Header';
+import Image from 'next/image';
 
 // --- Type Definitions ---
 interface Artist { name: string }
 interface Album { 
   name: string;
-  images?: Array<{ url: string }>;
+  images?: Array<{ url: string; height: number; width: number }>;
 }
 interface SpotifyTrack {
   name: string;
@@ -34,17 +35,21 @@ interface SongData {
 }
 
 function SongResultCard({ track }: { track: SpotifyTrack }) {
-  const imageUrl = track.album?.images?.[0]?.url;
+  const image = track.album?.images?.[0];
+
   return (
     <div 
       className="p-6 rounded-lg text-left w-full max-w-md transition-opacity duration-700 opacity-100"
       style={{ backgroundColor: '#1F1F1F' }}
     >
-      {imageUrl && (
-        <img 
-          src={imageUrl} 
+      {image && (
+        <Image 
+          src={image.url} 
           alt={`Album cover for ${track.name}`}
           className="w-full h-auto rounded-lg mb-4 object-cover" 
+          width={image.width}
+          height={image.height}
+          priority
         />
       )}
       <h2 className="text-2xl font-bold mb-2" style={{ color: '#D1F577' }}>
@@ -139,8 +144,12 @@ export default function SongPage() {
         }
         const data: SongData = await res.json();
         setSongData(data);
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError('An unknown error occured')
+        }
       } finally {
         setIsLoading(false);
       }

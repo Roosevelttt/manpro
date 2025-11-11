@@ -82,6 +82,7 @@ model SearchHistory {
   coverUrl    String?  // Album cover image URL
   duration    Int?     // Duration in seconds
   label       String?  // Record label
+  spotifyId   String?
   
   // ACRCloud specific data (optional, for reference)
   acrCloudId  String?  // ACRCloud track ID

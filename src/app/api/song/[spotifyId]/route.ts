@@ -1,4 +1,3 @@
-// src/app/api/song/[spotifyId]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 // ================== ENV ==================
@@ -141,12 +140,12 @@ async function resolveToSpotify(items: LastFmSimilarTrack[], token: string): Pro
 // ================== MAIN HANDLER ==================
 export async function GET(
   req: NextRequest,
-  { params }: { params: { spotifyId: string } }
+  context: { params: Promise<{ spotifyId: string }> }
 ) {
-  const { spotifyId } = params;
+  const { spotifyId } = await context.params;
 
   if (!spotifyId || spotifyId === 'unknown') {
-     return NextResponse.json({ error: 'Valid Spotify ID is required' }, { status: 400 });
+    return NextResponse.json({ error: 'Valid Spotify ID is required' }, { status: 400 });
   }
 
   try {
@@ -169,7 +168,7 @@ export async function GET(
 
     return NextResponse.json({
       track: trackDetails,
-      recommendations: recommendations,
+      recommendations,
     });
   } catch (error) {
     console.error('❌ API Song error:', error);

@@ -19,9 +19,6 @@ import { useRouter } from 'next/navigation';
 const RECOGNITION_TIMEOUT_MS = 30000;
 
 // --- Type Definitions ---
-interface Artist { name: string }
-interface Album { name: string }
-
 interface SongResult {
   title: string;
   artists: { name: string }[];
@@ -43,8 +40,6 @@ export default function HomePage() {
   const { data: session } = useSession();
   const [isRecording, setIsRecording] = useState(false);
   const [isRecognizing, setIsRecognizing] = useState(false);
-  const [isLoadingRecs, setIsLoadingRecs] = useState(false);
-  const [result, setResult] = useState<SongResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const router = useRouter();
@@ -128,7 +123,7 @@ export default function HomePage() {
       }
 
       timeoutRef.current = setTimeout(() => {
-        if (result) {
+        if (resultFoundRef.current) {
           return;
         }
         

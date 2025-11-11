@@ -80,17 +80,6 @@ interface SpotifySearchResponse {
     items: SpotifyTrack[];
   };
 }
-interface SpotifyRecommendationsResponse {
-  tracks: SpotifyTrack[];
-}
-
-interface Recommendation {
-  title: string;
-  artists: { name: string }[];
-  album: { name: string };
-  spotifyId: string;
-  preview_url: string | null;
-}
 
 // ================== SPOTIFY UTILS ==================
 async function getSpotifyAccessToken(): Promise<string> {
@@ -173,7 +162,7 @@ export async function POST(req: NextRequest) {
               title: result.title,
               artists: JSON.stringify(result.artists.map(a => a.name)),
               album: result.album.name,
-              // spotifyId: result.spotifyId,
+              spotifyId: result.spotifyId,
             },
           });
         } catch (dbError) {
