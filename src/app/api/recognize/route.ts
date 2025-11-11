@@ -5,18 +5,29 @@ import { prisma } from '@/lib/prisma';
 import crypto from 'crypto';
 import { validateAudioBuffer, analyzeAudioBuffer } from '@/lib/audioUtils';
 
+// interface SongResult {
+//   title: string;
+//   artists: Array<{ name: string }>;
+//   album: { name: string };
+//   external_metadata?: Record<string, unknown>;
+//   source: 'music' | 'humming';
+//   score?: string;
+//   error?: string;
+//   spotifyId?: string | null;
+//   recommendations?: Recommendation[];
+//   previewUrl: string | null;
+//   imageUrl: string | null;
+//   spotifyUrl: string | null;
+// }
+
 interface SongResult {
   title: string;
   artists: Array<{ name: string }>;
   album: { name: string };
-  external_metadata?: Record<string, unknown>;
   source: 'music' | 'humming';
-  score?: string;
-  error?: string;
   spotifyId?: string | null;
-  recommendations?: Recommendation[];
+  error?: string;
 }
-
 interface ACRCloudMusicMetadata {
   title: string;
   artists: Array<{ name: string }>;
@@ -60,16 +71,9 @@ interface SpotifyResolveResult {
   spotifyId: string | null;
   artistId: string | null;
 }
-
-interface SpotifyAlbum {
-  name: string;
-}
 interface SpotifyTrack {
   id: string;
-  name: string;
   artists: SpotifyArtist[];
-  album: SpotifyAlbum;
-  preview_url: string | null;
 }
 interface SpotifySearchResponse {
   tracks: {
@@ -129,43 +133,6 @@ async function resolveSpotifyTrack(title: string, artist: string, token: string)
   return { spotifyId: null, artistId: null };
 }
 
-async function getRecommendations(trackId: string, token: string, artistId?: string): Promise<Recommendation[]> {
-  try {
-    const params = new URLSearchParams();
-    params.set("limit", "5");
-    params.set("market", "ID");
-
-    if (trackId) params.set("seed_tracks", trackId);
-    if (artistId) params.set("seed_artists", artistId);
-
-    const url = `https://api.spotify.com/v1/recommendations?${params.toString()}`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-
-    const txt = await res.text();
-    console.log("[Spotify Raw Recommendations]", txt);
-
-    if (!res.ok) {
-      console.error("[Spotify] Recommendation request failed:", res.status, txt);
-      return [];
-    }
-
-    const parsed = JSON.parse(txt) as SpotifyRecommendationsResponse;
-    return (parsed.tracks ?? []).map((t) => ({
-      title: t.name,
-      artists: t.artists.map((a) => ({ name: a.name })),
-      album: { name: t.album.name },
-      spotifyId: t.id,
-      preview_url: t.preview_url,
-    }));
-  } catch (err) {
-    console.error("[Spotify] getRecommendations error:", err);
-    return [];
-  }
-}
-
 // ================== MAIN HANDLER ==================
 export async function POST(req: NextRequest) {
   try {
@@ -206,7 +173,7 @@ export async function POST(req: NextRequest) {
               title: result.title,
               artists: JSON.stringify(result.artists.map(a => a.name)),
               album: result.album.name,
-              // Other fields would go here if needed
+              // spotifyId: result.spotifyId,
             },
           });
         } catch (dbError) {
@@ -243,7 +210,7 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
       artists: [], 
       album: { name: '' }, 
       source: 'music',
-      error: 'ACRCloud credentials are not configured.' 
+      error: 'ACRCloud credentials are not configured.',
     };
   }
 
@@ -301,24 +268,15 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
         // const album = music.album?.name || '';
 
         
-        const { spotifyId, artistId } = await resolveSpotifyTrack(title, artist, token);
-        console.log("[Recognize] SpotifyId:", spotifyId, "| ArtistId:", artistId);
-
-        const recommendations = spotifyId
-          ? await getRecommendations(spotifyId, token, artistId ?? undefined)
-          : [];
+        const { spotifyId } = await resolveSpotifyTrack(title, artist, token);
+        console.log("[Recognize] SpotifyId:", spotifyId);
 
         return {
           title: songData.title,
           artists: songData.artists,
           album: { name: songData.album.name },
-          external_metadata: {
-            ...songData,
-            album: songData.album
-          },
           source: 'music',
           spotifyId,
-          recommendations
         };
       }
       
@@ -328,21 +286,14 @@ async function recognizeWithACRCloud(audioBuffer: Buffer, fileName: string): Pro
         const title = hummingData.title;
         const artist = hummingData.artists[0]?.name ?? '';
 
-        const { spotifyId, artistId } = await resolveSpotifyTrack(title, artist, token);
-        const recommendations = spotifyId
-          ? await getRecommendations(spotifyId, token, artistId ?? undefined)
-          : [];
+        const { spotifyId } = await resolveSpotifyTrack(title, artist, token);
+
         return {
           title: hummingData.title,
           artists: hummingData.artists,
           album: { name: hummingData.album.name },
-          external_metadata: {
-            ...hummingData,
-            album: hummingData.album
-          },
           source: 'humming',
           spotifyId,
-          recommendations
         };
       }
     }
