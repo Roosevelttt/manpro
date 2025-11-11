@@ -1,8 +1,10 @@
+// src/app/api/song/[spotifyId]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 // ================== ENV ==================
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID!;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET!;
+const LASTFM_API_KEY = process.env.LASTFM_API_KEY!; // <-- ADD THIS
 
 // ================== TYPES ==================
 interface SpotifyArtist {
@@ -23,9 +25,6 @@ interface SpotifyTrack {
     spotify: string;
   };
 }
-interface SpotifyRecommendationsResponse {
-  tracks: SpotifyTrack[];
-}
 interface Recommendation {
   title: string;
   artists: { name: string }[];
@@ -34,6 +33,10 @@ interface Recommendation {
   preview_url: string | null;
   spotifyUrl: string;
 }
+
+interface LastFmSimilarTrack { name: string; artist: { name: string }; url?: string }
+interface LastFmSimilarResp { similartracks?: { track?: LastFmSimilarTrack[] } }
+interface SpotifySearchResp { tracks: { items: SpotifyTrack[] } }
 
 // ================== SPOTIFY UTILS ==================
 async function getSpotifyAccessToken(): Promise<string> {
@@ -73,40 +76,66 @@ async function getSpotifyTrackDetails(trackId: string, token: string): Promise<S
   }
 }
 
-async function getRecommendations(trackId: string, token: string, artistId?: string): Promise<Recommendation[]> {
-  try {
-    const params = new URLSearchParams();
-    params.set("limit", "6");
-    params.set("market", "ID");
-    if (trackId) params.set("seed_tracks", trackId);
-    if (artistId) params.set("seed_artists", artistId);
+function cleanTitle(raw: string): string {
+  return raw
+    .replace(/\s*\(from[^)]*\)/gi, "")
+    .replace(/\s*\(remaster(ed)?[^)]*\)/gi, "")
+    .replace(/\s*\(live[^)]*\)/gi, "")
+    .replace(/\s*-\s*live.*$/i, "")
+    .replace(/\s*-\s*remaster(ed)?\s*\d{0,4}$/i, "")
+    .trim();
+}
 
-    const url = `https://api.spotify.com/v1/recommendations?${params.toString()}`;
-    
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
+async function lastfmSimilar(artist: string, track: string, limit = 6): Promise<LastFmSimilarTrack[]> {
+  const url = new URL("https://ws.audioscrobbler.com/2.0/");
+  url.searchParams.set("method", "track.getSimilar");
+  url.searchParams.set("artist", artist);
+  url.searchParams.set("track", track);
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("autocorrect", "1");
+  url.searchParams.set("api_key", LASTFM_API_KEY);
+  url.searchParams.set("format", "json");
 
-    if (!res.ok) {
-      const txt = await res.text();
-      console.error("[Spotify] Recommendation request failed:", res.status, txt);
-      return [];
-    }
+  const res = await fetch(url.toString(), { cache: "no-store" });
+  const txt = await res.text();
+  if (!res.ok || !txt) return [];
+  let data: LastFmSimilarResp | null = null;
+  try { data = JSON.parse(txt) as LastFmSimilarResp; } catch { return []; }
+  return data?.similartracks?.track ?? [];
+}
 
-    const parsed = (await res.json()) as SpotifyRecommendationsResponse;
-    return (parsed.tracks ?? []).map((t) => ({
-      title: t.name,
-      artists: t.artists.map((a) => ({ name: a.name })),
-      album: { name: t.album.name },
-      spotifyId: t.id,
-      preview_url: t.preview_url,
-      spotifyUrl: t.external_urls.spotify,
-    }));
-  } catch (err) {
-    console.error("[Spotify] getRecommendations error:", err);
-    return [];
-  }
+async function searchSpotifyTrack(q: string, token: string, market?: string): Promise<SpotifyTrack | null> {
+  const url = new URL("https://api.spotify.com/v1/search");
+  url.searchParams.set("q", q);
+  url.searchParams.set("type", "track");
+  url.searchParams.set("limit", "1");
+  if (market) url.searchParams.set("market", market);
+  const r = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  if (!r.ok) return null;
+  const j: SpotifySearchResp = await r.json();
+  return j.tracks.items?.[0] ?? null;
+}
+
+async function resolveToSpotify(items: LastFmSimilarTrack[], token: string): Promise<Recommendation[]> {
+  const jobs = items.map(async (it) => {
+    const q = `track:"${cleanTitle(it.name)}" artist:"${it.artist.name}"`;
+    const found = (await searchSpotifyTrack(q, token, "ID")) || (await searchSpotifyTrack(q, token));
+    if (!found) return null;
+    const rec: Recommendation = {
+      title: found.name,
+      artists: found.artists.map((a) => ({ name: a.name })),
+      album: { name: found.album.name },
+      spotifyId: found.id,
+      preview_url: found.preview_url,
+      spotifyUrl: found.external_urls?.spotify ?? `https://open.spotify.com/track/${found.id}`,
+    };
+    return rec;
+  });
+
+  const settled = await Promise.allSettled(jobs);
+  const uniq = new Map<string, Recommendation>();
+  for (const s of settled) if (s.status === "fulfilled" && s.value) uniq.set(s.value.spotifyId, s.value);
+  return Array.from(uniq.values());
 }
 
 // ================== MAIN HANDLER ==================
@@ -116,12 +145,8 @@ export async function GET(
 ) {
   const { spotifyId } = params;
 
-  if (!spotifyId) {
-    return NextResponse.json({ error: 'Spotify ID is required' }, { status: 400 });
-  }
-  
-  if (spotifyId === 'unknown') {
-    return NextResponse.json({ error: 'Song could not be linked to Spotify' }, { status: 404 });
+  if (!spotifyId || spotifyId === 'unknown') {
+     return NextResponse.json({ error: 'Valid Spotify ID is required' }, { status: 400 });
   }
 
   try {
@@ -132,8 +157,15 @@ export async function GET(
       return NextResponse.json({ error: 'Track not found' }, { status: 404 });
     }
 
-    const artistId = trackDetails.artists?.[0]?.id;
-    const recommendations = await getRecommendations(spotifyId, token, artistId);
+    let recommendations: Recommendation[] = [];
+    if (LASTFM_API_KEY) {
+      const trackName = trackDetails.name;
+      const artistName = trackDetails.artists[0].name;
+      const similarTracks = await lastfmSimilar(artistName, trackName, 6);
+      recommendations = await resolveToSpotify(similarTracks, token);
+    } else {
+      console.warn("LASTFM_API_KEY not set, skipping recommendations.");
+    }
 
     return NextResponse.json({
       track: trackDetails,
