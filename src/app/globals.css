@@ -24,3 +24,24 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* cbcb */
+@keyframes synthwave-wave {
+  0% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.3); opacity: 0.3; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* Definisikan Utility Class Kustom */
+.animate-wave-1 {
+  animation: synthwave-wave 3s infinite linear;
+}
+
+.animate-wave-2 {
+  animation: synthwave-wave 3s infinite linear 0.7s;
+}
+
+.animate-wave-3 {
+  animation: synthwave-wave 3s infinite linear 1.4s;
+}
+
