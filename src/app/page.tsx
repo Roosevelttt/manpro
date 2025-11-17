@@ -12,13 +12,18 @@ import {
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import Header from '@/components/Header';
+// buat mic
+import { TrendingUp, ListMusic, History, Mic, Play } from 'lucide-react'; // Menggunakan Lucide Icons untuk tombol bawah dan Mic baru
 
-// --- Const ---
+
+// --- Constants ---
+// const RECORDING_INTERVAL_MS = 10000;
 const RECOGNITION_TIMEOUT_MS = 30000;
 
-// --- Types ---
+// --- Type Definitions ---
 interface Artist { name: string }
 interface Album { name: string }
+
 interface SongResult {
   title: string;
   artists: Artist[];
@@ -27,14 +32,35 @@ interface SongResult {
   error?: string;
   spotifyId?: string;
 }
+
 interface Recommendation {
   title: string;
   artists: Artist[];
   album: Album;
   spotifyId: string;
   preview_url: string | null;
-  spotifyUrl: string;
+  spotifyUrl: string; // <-- camelCase & wajib ada
 }
+
+// // Tambahkan helper function yang hilang (agar kode bisa dijalankan)
+// const coverFrom = (item: any) => item?.album?.images?.[0]?.url || item?.image?.[3]?.['#text'] || null;
+// const spotifyUrlFromId = (id: string) => id ? `https://open.spotify.com/track/${id}` : null;
+
+// --- Custom Tailwind Animation for Synthwave Rings ---
+// CATATAN: Anda perlu menambahkan keyframes ini di file `tailwind.config.js` Anda:
+/*
+keyframes: {
+  wave: {
+    '0%': { transform: 'scale(1)', opacity: '0.6' },
+    '50%': { transform: 'scale(1.3)', opacity: '0.3' },
+    '100%': { transform: 'scale(1.6)', opacity: '0' },
+  },
+},
+animation: {
+  'wave-1': 'wave 3s infinite linear',
+  'wave-2': 'wave 3s infinite linear 1s', // Delay 1s
+},
+*/
 
 export default function HomePage() {
   const { data: session } = useSession();
@@ -51,9 +77,18 @@ export default function HomePage() {
   const resultRef = useRef<SongResult | null>(null);
   const isRecognizingRef = useRef<boolean>(false);
 
-  useEffect(() => { resultRef.current = result; }, [result]);
-  useEffect(() => { isRecognizingRef.current = isRecognizing; }, [isRecognizing]);
-  useEffect(() => { checkAudioDecodingSupport(); }, []);
+  useEffect(() => {
+    resultRef.current = result;
+  }, [result]);
+
+  useEffect(() => {
+    isRecognizingRef.current = isRecognizing;
+  }, [isRecognizing]);
+
+  // Check audio codec support on mount (for debugging)
+  useEffect(() => {
+    checkAudioDecodingSupport();
+  }, []);
 
   // --- Start Recording ---
   const handleStartRecording = async () => {
@@ -61,91 +96,139 @@ export default function HomePage() {
     resultRef.current = null;
     setError(null);
     setIsRecognizing(false);
-    isRecognizingRef.current = false;
+    isRecognizingRef.current = false;  
     setRecommendations([]);
 
     try {
+
+      // Use default audio constraints
       const audioConstraints = getOptimalAudioConstraints();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints
+      });
+
       streamRef.current = stream;
 
+      // Force WAV format
       let mimeType: string | undefined = 'audio/wav';
+      
+      // Check if WAV is supported
       if (!MediaRecorder.isTypeSupported('audio/wav')) {
         mimeType = getSupportedAudioMimeType();
       }
+      
       const mediaRecorderOptions = mimeType ? { mimeType } : undefined;
+
       mediaRecorderRef.current = new MediaRecorder(stream, mediaRecorderOptions);
 
       mediaRecorderRef.current.ondataavailable = async (event) => {
-        if (resultRef.current) return;
+        if (resultRef.current) {
+          return;
+        }
+        
         if (event.data.size > 0) {
           let processedBlob = event.data;
+          
           try {
-            const can = await canDecodeAudio(event.data);
-            if (can) {
-              processedBlob = await normalizeAudioVolume(event.data, VOLUME_BOOST.MUSIC, false);
+            const canDecode = await canDecodeAudio(event.data);
+            if (canDecode) {
+              processedBlob = await normalizeAudioVolume(
+                event.data, 
+                VOLUME_BOOST.MUSIC,
+                false
+              );
             } else {
-              try { processedBlob = await convertToWav(event.data); } catch { processedBlob = event.data; }
+              try {
+                processedBlob = await convertToWav(event.data);
+              } catch {
+                processedBlob = event.data;
+              }
             }
-          } catch {
+          } catch (processingError) {
+            console.warn('Audio processing failed, using original audio:', processingError);
             processedBlob = event.data;
           }
-          if (!resultRef.current) recognizeSong(processedBlob);
+          
+          if (!resultRef.current) {
+            recognizeSong(processedBlob);
+          }
         }
       };
 
       mediaRecorderRef.current.start(10000);
       setIsRecording(true);
 
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      // Clear timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+
       timeoutRef.current = setTimeout(() => {
-        if (resultRef.current) return;
+        if (result) {
+          return;
+        }
+        
         setError("Couldn't find a match. Try getting closer to the source or humming more clearly!");
         handleStopRecording();
       }, RECOGNITION_TIMEOUT_MS);
     } catch (err) {
-      console.error('Error accessing microphone:', err);
-      setError('Microphone access denied. Please allow access in your browser settings.');
+      console.error("Error accessing microphone:", err);
+      setError("Microphone access denied. Please allow access in your browser settings.");
     }
   };
 
   // --- Stop Recording ---
   const handleStopRecording = () => {
-    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop();
-    if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+    }
     setIsRecording(false);
     setIsRecognizing(false);
   };
 
-  // --- Recognize via API ---
+  // --- Recognize Song via API ---
   const recognizeSong = async (audioBlob: Blob) => {
     if (isRecognizingRef.current || resultRef.current) return;
+
     setIsRecognizing(true);
     isRecognizingRef.current = true;
-
     const formData = new FormData();
     formData.append('sample', audioBlob, 'recording.wav');
 
-    try {
+    try {      
       const response = await fetch('/api/recognize', { method: 'POST', body: formData });
-      if (response.status === 204) { setIsRecognizing(false); return; }
-
+      
+      if (response.status === 204) {
+        setIsRecognizing(false);
+        return;
+      }
+      
       const data: SongResult = await response.json();
+
       if (response.ok && data.title) {
         setResult(data);
         resultRef.current = data;
         handleStopRecording();
+        // pakai title + artist utk /api/similarity (Last.fm proxy)
         if (data.title && data.artists?.length) {
           setIsLoadingRecs(true);
           await fetchRecommendations(data.title, data.artists[0].name);
         }
       } else {
-        console.log('No result yet, waiting next chunk…');
+        console.log("No result in this chunk, waiting for the next one...");
       }
     } catch (err) {
-      console.error('Recognition error:', err);
-      if (!resultRef.current) setError('An error occurred during recognition.');
+      console.error("Recognition error:", err);
+      if (!result) {
+        setError('An error occurred during recognition.');
+      }
       handleStopRecording();
     } finally {
       setIsRecognizing(false);
@@ -154,217 +237,224 @@ export default function HomePage() {
     }
   };
 
-  // --- Recommendations ---
+  // --- Fetch Recommendations (Last.fm -> Spotify) ---
   const fetchRecommendations = async (title: string, artistName: string) => {
     try {
       const qs = new URLSearchParams({ track: title, artist: artistName });
       const res = await fetch(`/api/similarity?${qs.toString()}`);
       const recs: Recommendation[] = await res.json();
-      if (res.ok) setRecommendations(recs);
-      else console.error('Similarity (Last.fm) error:', recs);
+      if (res.ok) {
+        setRecommendations(recs);
+      } else {
+        console.error('Similarity (Last.fm) error:', recs);
+      }
     } catch (err) {
       console.error('Failed to fetch recommendations:', err);
     }
   };
 
-  // --- UI Colors/Text ---
-  const heroBg = '#0B1A63';          // biru tua
-  const micColor = '#F2A33C';        // oranye mic
-  const borderColor = '#FFFFFF';     // border lingkaran
-  const title = 'Input your tune to get started';
+  // --- Status Text ---
+  const getStatusText = () => {
+    if (error) return '';
+    if (isRecording) {
+      if (isRecognizing) return "Analyzing...";
+      return "Listening... Play music or hum a tune!";
+    }
+    if (result) return 'Result found!';
+    return 'Ready to listen';
+  };
+
+  const buttonColor = error ? '#EF4444' : '#4A52EB';
+
+  // --- UI Colors/Text yang disesuaikan dengan desain terakhir ---
+  const HERO_BG = '#08122B'; // Biru gelap (Deep Navy)
+  
+  const ACCENT_BLUE = '#00FFFF'; // Biru Electric Neon
+  const PRIMARY_TEXT_COLOR = 'text-white/95';
+
+  const TITLE = 'Input your tune to get started';
+  const SUBTITLE = 'Tap the microphone to begin listening.';
 
   return (
     <>
-      {/* Gunakan Header yang sudah ada agar auth buttons ikut tampil */}
-      <Header />
+       <Header />
 
       {/* HERO */}
-      <section className="min-h-screen flex items-center justify-center text-center px-4"
-        style={{ backgroundColor: heroBg }}>
-        <div className="w-full max-w-5xl mx-auto">
+      <section 
+        className="min-h-screen flex flex-col items-center justify-center text-center px-4 relative overflow-hidden"
+        style={{ backgroundColor: HERO_BG }}
+      >
+        {/* Efek Latar Belakang Garis Futuristik (Optional - but suggested) */}
+        {/* Anda bisa menambahkan elemen ini untuk kesan synthwave */}
+        <div className="absolute inset-0 opacity-20 pointer-events-none" 
+             style={{ 
+               backgroundImage: `radial-gradient(ellipse at center, ${ACCENT_BLUE} 0%, transparent 70%)`, 
+             }}
+        />
+
+        <div className="w-full max-w-5xl mx-auto relative z-10">
+          
           {/* TITLE */}
-          <h1 className="text-4xl sm:text-3xl md:text-6xl font-bold tracking-wide text-white/95">
-            {title}
+          <h1 className={`text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-wider ${PRIMARY_TEXT_COLOR}`}>
+            {TITLE}
           </h1>
+          <p className="mt-3 text-lg text-white/70">
+            {SUBTITLE}
+          </p>
           
           {/* Mic button */}
-          <div className="mt-12 flex justify-center">
-            <div className="relative">
-              {/* ping ring saat recording */}
-              {isRecording && (
-                <>
-                  <span className="absolute inset-0 rounded-full animate-ping"
-                        style={{ backgroundColor: 'rgba(255,255,255,0.07)' }} />
-                  <span className="absolute inset-0 rounded-full animate-[ping_2.5s_linear_infinite]"
-                        style={{ backgroundColor: 'rgba(255,255,255,0.05)' }} />
-                </>
+          <div className="mt-14 flex flex-col items-center">
+            <div className="relative flex items-center justify-center w-[180px] h-[180px]">
+              
+              {/* --- Synthwave Pulsating Rings (Visualisasi Gelombang) --- */}
+              {isRecording ? (
+                    // Menggunakan class CSS Kustom: animate-wave-1, animate-wave-2, dll.
+                    <>
+                      <span 
+                        className="absolute inset-0 rounded-full bg-transparent border-4 opacity-0 animate-wave-1" // <-- Ganti di sini
+                        style={{ borderColor: ACCENT_BLUE }} 
+                      />
+                      <span 
+                        className="absolute inset-0 rounded-full bg-transparent border-4 opacity-0 animate-wave-2" // <-- Ganti di sini
+                        style={{ borderColor: ACCENT_BLUE }} 
+                      />
+                      <span 
+                        className="absolute inset-0 rounded-full bg-transparent border-4 opacity-0 animate-wave-3" // <-- Ganti di sini
+                        style={{ borderColor: ACCENT_BLUE }} 
+                      />
+                    </>
+                ) : (
+                // Efek glow minimal saat tidak recording
+                <span 
+                    className="absolute inset-0 rounded-full transition-shadow duration-300"
+                    style={{ boxShadow: `0 0 20px rgba(0, 255, 255, 0.4)` }} 
+                />
               )}
 
               <button
                 onClick={isRecording ? handleStopRecording : handleStartRecording}
-                className="relative flex items-center justify-center rounded-full transition-transform hover:scale-105 focus:outline-none"
+                className={`relative flex items-center justify-center rounded-full transition-transform duration-300 ${isRecording ? 'scale-110' : 'hover:scale-105'}`}
                 style={{
-                  width: 180, height: 180,
-                  border: `7px solid ${borderColor}`,
-                  backgroundColor: 'transparent',
-                  boxShadow: '0 8px 28px rgba(0,0,0,0.25)'
+                  width: 150, height: 150,
+                  border: `4px solid ${ACCENT_BLUE}`,
+                  backgroundColor: isRecording ? ACCENT_BLUE + '30' : 'transparent', // Sedikit warna latar saat merekam
+                  boxShadow: `0 0 15px ${ACCENT_BLUE}80`, // Efek glow
                 }}
                 aria-label={isRecording ? 'Stop recording' : 'Start recording'}
               >
-                {/* ikon mic */}
-                <svg width="100" height="100" viewBox="0 0 24 24" fill={micColor} xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Z"/>
-                  <path d="M5 11a1 1 0 1 0-2 0 9 9 0 0 0 8 8v2H9a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-2a9 9 0 0 0 8-8 1 1 0 1 0-2 0 7 7 0 0 1-14 0Z"/>
-                </svg>
+                {/* ICON MIC BARU (Menggunakan Lucide Icon) */}
+                {isRecognizing ? (
+                  <Play size={64} className="text-white/80 animate-pulse" /> // Ikon play/pause saat menganalisis
+                ) : (
+                  <Mic size={64} className="text-white" />
+                )}
               </button>
             </div>
-          </div>
-
-          {/* status kecil di bawah mic */}
-          <p className="mt-6 text-sm text-white/70">
-            {isRecording ? (isRecognizing ? 'Analyzing…' : 'Listening… hum or play your song') : (error ? '' : 'Tap the mic to start')}
-          </p>
-
-          {/* error toast */}
-          {error && (
-            <p className="mt-6 text-base font-medium text-red-400">
-              {error}
+          
+            {/* Status di bawah mic */}
+            <p className="mt-6 text-base font-semibold text-white">
+              {isRecording ? (
+                isRecognizing ? 'ANALYZING…' : 'LISTENING…'
+              ) : (
+                error ? 'Tap to Listen' : 'Tap to Listen'
+              )}
             </p>
-          )}
+
+            {/* Status error */}
+            {error && (
+              <p className="mt-4 text-base font-medium text-red-400">
+                {error}
+              </p>
+            )}
+
+            
+          </div>
         </div>
       </section>
 
-      {/* RESULT */}
-      {/* ===================== RESULT BANNER (baru) ===================== */}
-      {result && (
-        <section className="w-full" style={{ background: '#2D3470' }}>
-          <div className="max-w-6xl mx-auto px-6 py-10 md:py-12">
-            <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-8 md:gap-10 items-center">
-              {/* Cover */}
-              <div className="justify-self-center md:justify-self-start">
-                {coverFrom(result) ? (
-                  // @ts-ignore
-                  <img
-                    src={coverFrom(result)}
-                    alt="cover"
-                    className="w-[220px] h-[220px] object-cover rounded-md shadow-lg"
-                  />
-                ) : (
-                  <div className="w-[220px] h-[220px] bg-white/10 rounded-md grid place-items-center text-white/60">
-                    No Cover
-                  </div>
-                )}
-              </div>
-
-              {/* Text + actions */}
-              <div>
-                <p className="font-extrabold"
-                   style={{ color: '#F2A33C', fontSize: 'clamp(1.05rem, 2.2vw, 1.35rem)' }}>
-                  Recognition successful!
-                </p>
-                <h2 className="text-white font-extrabold mt-2"
-                    style={{ fontSize: 'clamp(2rem, 4.8vw, 3.2rem)', lineHeight: 1.1 }}>
-                  {result.title}
-                </h2>
-                <p className="text-white/85 mt-2"
-                   style={{ fontSize: 'clamp(0.95rem, 2vw, 1.1rem)' }}>
-                  {result.artists.map(a => a.name).join(', ')}
-                </p>
-
-                <div className="mt-6 flex flex-wrap gap-4">
-                  <button
-                    onClick={resetToHero}
-                    className="px-5 py-2.5 rounded-md bg-white text-[#0B1A63] font-semibold shadow hover:opacity-95"
-                  >
-                    Try Again
-                  </button>
-
-                  {(result.spotifyId || (result as any)?.spotifyUrl) && (
-                    <a
-                      href={(result as any)?.spotifyUrl || spotifyUrlFromId(result.spotifyId)!}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-5 py-2.5 rounded-md bg-black text-white font-semibold shadow hover:opacity-95 inline-flex items-center gap-2"
-                    >
-                      Play on Spotify
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="#1DB954" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0Zm5.49 17.318a.75.75 0 0 1-1.033.258c-2.83-1.73-6.397-2.123-10.6-1.172a.75.75 0 1 1-.33-1.463c4.57-1.032 8.5-.58 11.6 1.294a.75.75 0 0 1 .363 1.083Zm1.43-3.193a.94.94 0 0 1-1.292.322c-3.245-1.993-8.192-2.572-12.038-1.42a.94.94 0 1 1-.536-1.807c4.242-1.259 9.62-.62 13.302 1.616a.94.94 0 0 1 .564 1.289Zm.126-3.33c-3.788-2.247-10.038-2.455-13.63-1.365a1.125 1.125 0 1 1-.665-2.158c4.161-1.283 11.024-1.034 15.313 1.55a1.125 1.125 0 0 1-1.018 1.973Z"/>
-                      </svg>
-                    </a>
-                  )}
-                </div>
-              </div>
-            </div>
+        {result && (
+          <div className="mt-8 p-6 rounded-lg text-left w-full max-w-md" style={{ backgroundColor: '#1F1F1F' }}>
+            <div className="flex items-center justify-between mb-2">
+            <h2 className="text-2xl font-bold" style={{ color: '#D1F577' }}>
+                {result.title}
+            </h2>
           </div>
-          <hr className="border-t border-white/20" />
-        </section>
-      )}
-      {/* ===================== /RESULT BANNER ===================== */}
+          <p className="text-lg mb-1" style={{ color: '#F1F1F3' }}>
+              by {result.artists.map((artist: { name: string }) => artist.name).join(', ')}
+            </p>
+            <p className="text-md" style={{ color: '#EEECFF', opacity: 0.7 }}>
+              Album: {result.album.name}
+            </p>
+            
+            {session && (
+              <p className="text-sm mt-4 text-center" style={{ color: '#D1F577' }}>
+                ✓ Saved to your history
+              </p>
+            )}
+          </div>
+        )}
+        
 
-      {/* ===================== RECOMMENDATIONS GRID (baru) ===================== */}
-      {(isLoadingRecs || recommendations.length > 0) && (
-        <section className="px-4 pb-16" style={{ backgroundColor: heroBg }}>
-          <div className="max-w-6xl mx-auto">
-            <h3 className="text-white font-extrabold text-center mb-8"
-                style={{ fontSize: 'clamp(1.4rem, 3vw, 2.2rem)' }}>
-              Recommended for you
+        {/* Recommendations */}
+        {(isLoadingRecs || recommendations.length > 0) && (
+          <div className="mt-8 w-full max-w-2xl">
+            <h3 className="text-xl font-bold mb-4" style={{ color: '#D1F577' }}>
+              {isLoadingRecs ? 'Finding recommendations…' : 'You may also like:'}
             </h3>
 
-            {isLoadingRecs && (
-              <p className="text-white/70 text-center">Finding recommendations…</p>
+            {!isLoadingRecs && recommendations.length === 0 && (
+              <p className="text-sm" style={{ color: '#EEECFF', opacity: 0.7 }}>
+                No recommendations found.
+              </p>
             )}
 
-            {!isLoadingRecs && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {recommendations.map((rec) => {
-                  const cover = coverFrom(rec);
-                  return (
-                    <div key={rec.spotifyId} className="rounded-2xl bg-white shadow-sm overflow-hidden">
-                      <div className="aspect-square bg-gray-200 overflow-hidden">
-                        {cover ? (
-                          // @ts-ignore
-                          <img src={cover} alt="cover" className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full grid place-items-center text-gray-500">No Cover</div>
-                        )}
-                      </div>
-                      <div className="p-4">
-                        <div className="font-extrabold text-[#0B1A63] leading-tight"
-                             style={{ fontSize: 'clamp(1rem, 2.2vw, 1.2rem)' }}>
-                          {rec.title}
-                        </div>
-                        <div className="text-sm text-gray-600 mt-1">
-                          {rec.artists.map(a => a.name).join(', ')}
-                        </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {recommendations.map((rec) => (
+                <div key={rec.spotifyId} className="p-4 rounded-lg" style={{ backgroundColor: '#1F1F1F' }}>
+                  <h4 className="font-semibold text-lg mb-1" style={{ color: '#EEECFF' }}>{rec.title}</h4>
+                  <p className="text-sm mb-1" style={{ color: '#F1F1F3' }}>
+                    by {rec.artists.map((a) => a.name).join(', ')}
+                  </p>
+                  <p className="text-sm" style={{ color: '#EEECFF', opacity: 0.7 }}>
+                    Album: {rec.album.name}
+                  </p>
 
-                        <a
-                          href={rec.spotifyUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="mt-3 inline-flex items-center justify-center w-full rounded-md bg-black text-white font-semibold py-2 hover:opacity-95"
-                        >
-                          Play on Spotify
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="#1DB954" className="ml-2" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0Z"/>
-                          </svg>
-                        </a>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                  {/* Link ke Spotify */}
+                  <a
+                    href={rec.spotifyUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-green-400 underline mt-2 inline-block"
+                  >
+                    Open in Spotify
+                  </a>
+
+                  {rec.preview_url && (
+                    <audio controls className="w-full mt-3" src={rec.preview_url}></audio>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
-        </section>
-      )}
-      {/* ===================== /RECOMMENDATIONS GRID ===================== */}
+        )}
 
-      {/* Prompt login kecil kalau belum login & belum ada hasil (dibiarkan) */}
-      {!session && !result && (
-        <div className="absolute top-4 right-4 hidden">
-          <Link href="/login" className="text-white">Login</Link>
-        </div>
-      )}
+        {error && (
+          <p className="mt-4 text-lg font-medium" style={{ color: '#EF4444' }}>
+            {error}
+          </p>
+        )}
+
+        {!session && !result && (
+          <div className="mt-8 p-4 rounded-lg" style={{ backgroundColor: '#1F1F1F' }}>
+            <p className="text-sm" style={{ color: '#EEECFF' }}>
+              <Link href="/login" className="font-semibold hover:underline" style={{ color: '#D1F577' }}>
+                Sign in
+              </Link>
+              {' '}to save your search history
+            </p>
+          </div>
+        )}
+      {/* </main> */}
     </>
   );
 }
