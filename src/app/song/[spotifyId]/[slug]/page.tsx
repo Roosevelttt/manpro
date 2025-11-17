@@ -13,6 +13,7 @@ interface Album {
   images?: Array<{ url: string; height: number; width: number }>;
 }
 interface SpotifyTrack {
+  id: string;
   name: string;
   artists: Artist[];
   album: Album;
@@ -61,6 +62,19 @@ function SongResultCard({ track }: { track: SpotifyTrack }) {
       <p className="text-md mb-4" style={{ color: '#EEECFF', opacity: 0.7 }}>
         Album: {track.album.name}
       </p>
+
+      {/* spotify preview */}
+      {track.id && (
+        <iframe
+          src={`https://open.spotify.com/embed/track/${track.id}`}
+          className="w-full mt-4 rounded-lg"
+          width="100%"
+          height="152"
+          frameBorder="0"
+          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+          loading="lazy"
+        />
+      )}
 
       {track.preview_url && (
         <audio 
