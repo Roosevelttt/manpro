@@ -3,6 +3,7 @@
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useState } from 'react';
+import Image from 'next/image';
 
 export default function Header() {
   const { data: session, status } = useSession();
@@ -13,13 +14,22 @@ export default function Header() {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 bg-black border-b" style={{ borderColor: '#4A52EB' }}>
+    <header className="fixed top-0 left-0 right-0 z-50 bg-black border-b" style={{ borderColor: '#5003FF' }}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
-          <Link href="/" className="flex items-center">
-            <span className="text-2xl font-bold" style={{ color: '#D1F577' }}>
-              Find a Song!
+          <Link href="/" className="flex items-center gap-4">
+            <Image
+              src="/svg/tebaklagu-default.svg"
+              alt="TebakLagu Logo"
+              width={24}
+              height={24}
+              priority
+            />
+            
+            <span className="text-2xl font-germagont font-regular">
+              <span style={{ color: "#fff1ff" }}>tebak</span>
+              <span style={{ color: "#D1F577" }}>lagu</span>
             </span>
           </Link>
 

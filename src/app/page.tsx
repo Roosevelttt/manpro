@@ -19,7 +19,7 @@ import { useRouter } from 'next/navigation';
 const RECOGNITION_TIMEOUT_MS = 30000;
 const VISUALIZER_CANVAS_SIZE = 200;
 const VISUALIZER_INNER_RADIUS = 55;
-const VISUALIZER_MAX_BAR_HEIGHT = 35;
+const VISUALIZER_MAX_BAR_HEIGHT = 70;
 const VISUALIZER_BAR_WIDTH = 3;
 const VISUALIZER_FFT_SIZE = 256;
 
@@ -61,6 +61,7 @@ export default function HomePage() {
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const visualizerDataArrayRef = useRef<Uint8Array | null>(null);
+  const rotationOffsetRef = useRef(0);
 
   useEffect(() => {
     isRecognizingRef.current = isRecognizing;
@@ -87,6 +88,8 @@ export default function HomePage() {
 
     if (!ctx) return;
 
+    rotationOffsetRef.current += 0.001;
+
     // Get frequency data
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     analyser.getByteFrequencyData(dataArray as any);
@@ -97,19 +100,6 @@ export default function HomePage() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const gradient = ctx.createRadialGradient(
-      centerX,
-      centerY,
-      VISUALIZER_INNER_RADIUS,
-      centerX,
-      centerY,
-      VISUALIZER_INNER_RADIUS + VISUALIZER_MAX_BAR_HEIGHT + 10,
-    );
-    gradient.addColorStop(0, '#4A52EB');
-    gradient.addColorStop(0.5, '#5a61e8');
-    gradient.addColorStop(1, 'rgba(74, 82, 235, 0)');
-
-    ctx.strokeStyle = gradient;
     ctx.lineWidth = VISUALIZER_BAR_WIDTH;
     ctx.lineCap = 'round';
 
@@ -117,7 +107,12 @@ export default function HomePage() {
       const barHeight =
         (dataArray[i] / 255) * VISUALIZER_MAX_BAR_HEIGHT;
 
-      const angle = (i / bufferLength) * Math.PI * 2 - Math.PI / 2;
+      if (barHeight < 0.1) {
+        continue;
+      }
+      
+      const angle =
+        (i / bufferLength) * Math.PI * 2 + rotationOffsetRef.current;
 
       const x1 = centerX + Math.cos(angle) * VISUALIZER_INNER_RADIUS;
       const y1 = centerY + Math.sin(angle) * VISUALIZER_INNER_RADIUS;
@@ -125,6 +120,14 @@ export default function HomePage() {
         centerX + Math.cos(angle) * (VISUALIZER_INNER_RADIUS + barHeight);
       const y2 =
         centerY + Math.sin(angle) * (VISUALIZER_INNER_RADIUS + barHeight);
+
+      const barGradient = ctx.createLinearGradient(x1, y1, x2, y2);
+
+      barGradient.addColorStop(0.2, '#5003FF');
+      barGradient.addColorStop(0.4, '#D8C7FF');
+      barGradient.addColorStop(1, 'rgb(74, 82, 235, 0)');
+
+      ctx.strokeStyle = barGradient;
 
       ctx.beginPath();
       ctx.moveTo(x1, y1);
@@ -215,6 +218,7 @@ export default function HomePage() {
       analyserRef.current = analyser;
       sourceNodeRef.current = source;
       visualizerDataArrayRef.current = dataArray;
+      rotationOffsetRef.current = Math.random() * Math.PI * 2;
 
       mediaRecorderRef.current.start(10000);
       setIsRecording(true);
@@ -349,34 +353,49 @@ export default function HomePage() {
     }
   };
 
-  // --- Status Text ---
-  const getStatusText = () => {
-    if (error) return '';
-    if (isRecording) {
-      if (isRecognizing) return 'Analyzing...';
-      return 'Listening... Play music or hum a tune!';
-    }
-    return 'Ready to listen';
-  };
+  // const getStatusText = () => {
+  //   if (error) return '';
+  //   if (isRecording) {
+  //     if (isRecognizing) return 'Analyzing...';
+  //     return 'Listening... Play music or hum a tune!';
+  //   }
+  //   return 'Ready to listen';
+  // };
 
-  const buttonColor = error ? '#EF4444' : '#4A52EB';
+  const buttonColor = error ? '#EF4444' : '#5003FF';
   return (
     <>
       <Header />
-      <main className="flex min-h-screen flex-col items-center justify-center p-24 text-center bg-black pt-32">
-        <h1 className="text-5xl font-bold mb-4" style={{ color: '#D1F577' }}>
+      <main className="flex min-h-screen flex-col items-center justify-center p-24 text-center bg-black pt-32 overflow-hidden">
+        <h1
+          className={`text-5xl font-bold mb-4 transition-all duration-500 ease-in-out ${
+            isRecording
+              ? 'opacity-0 -translate-y-4' 
+              : 'opacity-100 translate-y-0' 
+          }`}
+          style={{ color: '#D1F577' }}
+        >
           Find a Song!
         </h1>
+        
         <p
-          className={`text-lg mb-12 ${
-            isRecording && !isRecognizing && 'animate-pulse'
+          className={`text-lg mb-12 transition-all duration-500 ease-in-out ${
+            isRecording
+              ? 'opacity-0 -translate-y-4'
+              : 'opacity-100 translate-y-0' 
           }`}
           style={{ color: '#EEECFF' }}
         >
-          {getStatusText()}
+          {!error && 'Ready to listen'}
         </p>
 
-        <div className="relative flex items-center justify-center mb-8">
+        <div
+          className={`relative flex items-center justify-center mb-8 transition-all duration-500 ease-in-out ${
+            isRecording
+              ? 'scale-125 -translate-y-20'
+              : 'scale-100 translate-y-0'
+          }`}
+        >
           {isRecording && !error && (
             <canvas
               ref={canvasRef}
@@ -388,7 +407,7 @@ export default function HomePage() {
 
           <button
             onClick={isRecording ? handleStopRecording : handleStartRecording}
-            className="relative w-24 h-24 rounded-full font-bold text-white shadow-2xl transition-all duration-300 hover:scale-105 z-10 flex items-center justify-center"
+            className="relative w-24 h-24 rounded-full font-bold text-white shadow-2xl transition-all duration-300 hover:scale-105 z-10 flex items-center justify-center focus:outline-none"
             style={{ backgroundColor: buttonColor }}
             disabled={isRecognizing} // Disable button while recognizing
           >
@@ -408,6 +427,23 @@ export default function HomePage() {
             )}
           </button>
         </div>
+
+        <p
+          className={`text-lg mt-4 transition-all duration-500 ease-in-out ${
+            isRecording && !isRecognizing && 'animate-pulse'
+          } ${
+            isRecording
+              ? 'opacity-100 translate-y-0'
+              : 'opacity-0 translate-y-4'
+          }`}
+          style={{ color: '#EEECFF', minHeight: '1.75rem' }} 
+        >
+          {isRecording &&
+            !error &&
+            (isRecognizing
+              ? 'Analyzing...'
+              : 'Listening... Play music or hum a tune!')}
+        </p>
 
         {error && (
           <p className="mt-4 text-lg font-medium" style={{ color: '#EF4444' }}>
