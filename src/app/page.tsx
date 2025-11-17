@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react'; // Import useCallback
 import {
   getOptimalAudioConstraints,
   getSupportedAudioMimeType,
@@ -7,7 +7,7 @@ import {
   normalizeAudioVolume,
   VOLUME_BOOST,
   convertToWav,
-  canDecodeAudio
+  canDecodeAudio,
 } from '@/lib/audioUtils';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
@@ -17,6 +17,11 @@ import { useRouter } from 'next/navigation';
 // --- Constants ---
 // const RECORDING_INTERVAL_MS = 10000;
 const RECOGNITION_TIMEOUT_MS = 30000;
+const VISUALIZER_CANVAS_SIZE = 200;
+const VISUALIZER_INNER_RADIUS = 55;
+const VISUALIZER_MAX_BAR_HEIGHT = 35;
+const VISUALIZER_BAR_WIDTH = 3;
+const VISUALIZER_FFT_SIZE = 256;
 
 // --- Type Definitions ---
 interface SongResult {
@@ -50,6 +55,13 @@ export default function HomePage() {
   const resultFoundRef = useRef<boolean>(false);
   const isRecognizingRef = useRef<boolean>(false);
 
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const visualizerDataArrayRef = useRef<Uint8Array | null>(null);
+
   useEffect(() => {
     isRecognizingRef.current = isRecognizing;
   }, [isRecognizing]);
@@ -59,21 +71,85 @@ export default function HomePage() {
     checkAudioDecodingSupport();
   }, []);
 
+  const drawVisualizer = useCallback(() => {
+    if (
+      !analyserRef.current ||
+      !visualizerDataArrayRef.current ||
+      !canvasRef.current
+    ) {
+      return;
+    }
+
+    const analyser = analyserRef.current;
+    const dataArray = visualizerDataArrayRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) return;
+
+    // Get frequency data
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    analyser.getByteFrequencyData(dataArray as any);
+
+    const bufferLength = analyser.frequencyBinCount;
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const gradient = ctx.createRadialGradient(
+      centerX,
+      centerY,
+      VISUALIZER_INNER_RADIUS,
+      centerX,
+      centerY,
+      VISUALIZER_INNER_RADIUS + VISUALIZER_MAX_BAR_HEIGHT + 10,
+    );
+    gradient.addColorStop(0, '#4A52EB');
+    gradient.addColorStop(0.5, '#5a61e8');
+    gradient.addColorStop(1, 'rgba(74, 82, 235, 0)');
+
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = VISUALIZER_BAR_WIDTH;
+    ctx.lineCap = 'round';
+
+    for (let i = 0; i < bufferLength; i++) {
+      const barHeight =
+        (dataArray[i] / 255) * VISUALIZER_MAX_BAR_HEIGHT;
+
+      const angle = (i / bufferLength) * Math.PI * 2 - Math.PI / 2;
+
+      const x1 = centerX + Math.cos(angle) * VISUALIZER_INNER_RADIUS;
+      const y1 = centerY + Math.sin(angle) * VISUALIZER_INNER_RADIUS;
+      const x2 =
+        centerX + Math.cos(angle) * (VISUALIZER_INNER_RADIUS + barHeight);
+      const y2 =
+        centerY + Math.sin(angle) * (VISUALIZER_INNER_RADIUS + barHeight);
+
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+
+    animationFrameRef.current = requestAnimationFrame(drawVisualizer);
+  }, []);
+
   // --- Start Recording ---
   const handleStartRecording = async () => {
     setError(null);
     setIsRecognizing(false);
-    isRecognizingRef.current = false;  
+    isRecognizingRef.current = false;
     resultFoundRef.current = false;
 
     try {
-
       // Use default audio constraints
       const audioConstraints = getOptimalAudioConstraints();
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints
+        audio: audioConstraints,
       });
       streamRef.current = stream;
+
       let mimeType: string | undefined = 'audio/wav';
       if (!MediaRecorder.isTypeSupported('audio/wav')) {
         mimeType = getSupportedAudioMimeType();
@@ -87,14 +163,14 @@ export default function HomePage() {
         }
         if (event.data.size > 0) {
           let processedBlob = event.data;
-          
+
           try {
             const canDecode = await canDecodeAudio(event.data);
             if (canDecode) {
               processedBlob = await normalizeAudioVolume(
-                event.data, 
+                event.data,
                 VOLUME_BOOST.MUSIC,
-                false
+                false,
               );
             } else {
               try {
@@ -104,18 +180,45 @@ export default function HomePage() {
               }
             }
           } catch (processingError) {
-            console.warn('Audio processing failed, using original audio:', processingError);
+            console.warn(
+              'Audio processing failed, using original audio:',
+              processingError,
+            );
             processedBlob = event.data;
           }
-          
+
           if (!resultFoundRef.current) {
             recognizeSong(processedBlob);
           }
         }
       };
 
+      const AudioContextPolyfill = window.AudioContext || 
+        (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      
+      if (!AudioContextPolyfill) {
+        throw new Error('Web Audio API is not supported in this browser.');
+      }
+      
+      const audioContext = new AudioContextPolyfill();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = VISUALIZER_FFT_SIZE;
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      // Store refs
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+      sourceNodeRef.current = source;
+      visualizerDataArrayRef.current = dataArray;
+
       mediaRecorderRef.current.start(10000);
       setIsRecording(true);
+      animationFrameRef.current = requestAnimationFrame(drawVisualizer); // Start visualizer
 
       // Clear timeout
       if (timeoutRef.current) {
@@ -126,13 +229,17 @@ export default function HomePage() {
         if (resultFoundRef.current) {
           return;
         }
-        
-        setError("Couldn't find a match. Try getting closer to the source or humming more clearly!");
+
+        setError(
+          "Couldn't find a match. Try getting closer to the source or humming more clearly!",
+        );
         handleStopRecording();
       }, RECOGNITION_TIMEOUT_MS);
     } catch (err) {
-      console.error("Error accessing microphone:", err);
-      setError("Microphone access denied. Please allow access in your browser settings.");
+      console.error('Error accessing microphone:', err);
+      setError(
+        'Microphone access denied. Please allow access in your browser settings.',
+      );
     }
   };
 
@@ -142,12 +249,42 @@ export default function HomePage() {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+
+    resultFoundRef.current = true;
+
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state === 'recording'
+    ) {
       mediaRecorderRef.current.stop();
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
     }
+
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.disconnect();
+      sourceNodeRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+    visualizerDataArrayRef.current = null;
+
+    // Clear canvas
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+    }
+
     setIsRecording(false);
     setIsRecognizing(false);
   };
@@ -161,41 +298,44 @@ export default function HomePage() {
     const formData = new FormData();
     formData.append('sample', audioBlob, 'recording.wav');
 
-    try {      
-      const response = await fetch('/api/recognize', { method: 'POST', body: formData });
-      
+    try {
+      const response = await fetch('/api/recognize', {
+        method: 'POST',
+        body: formData,
+      });
+
       if (response.status === 204) {
         setIsRecognizing(false);
         isRecognizingRef.current = false;
         return; // No result, keep listening
       }
-      
+
       const data: SongResult = await response.json();
 
-      // --- THIS IS THE KEY CHANGE ---
       if (response.ok && data.title && data.spotifyId) {
-        resultFoundRef.current = true; // Set flag to stop all processing
+        resultFoundRef.current = true; 
         handleStopRecording();
 
         const slug = slugify(data.title);
-        router.push(`/song/${data.spotifyId}/${slug}`); // Redirect!
+        const artists = data.artists.map((a) => a.name).join(', ');
 
-      } else if (response.ok && data.title && !data.spotifyId) {
-        // Found a song but no Spotify ID
-        resultFoundRef.current = true;
-        setError("Found the song, but couldn't link it to Spotify.");
-        handleStopRecording();
+        // 1. Store transition data in sessionStorage
+        sessionStorage.setItem(
+          'transitionData',
+          JSON.stringify({ title: data.title, artists })
+        );
+
+        // 2. Redirect immediately
+        router.push(`/song/${data.spotifyId}/${slug}`);
       } else if (response.ok && data.error) {
-        // API returned a known error
         resultFoundRef.current = true;
         setError(data.error);
         handleStopRecording();
       } else {
-        console.log("No result in this chunk, waiting for the next one...");
-        // Keep listening
+        console.log('No result in this chunk, waiting for the next one...');
       }
     } catch (err) {
-      console.error("Recognition error:", err);
+      console.error('Recognition error:', err);
       if (!resultFoundRef.current) {
         setError('An error occurred during recognition.');
       }
@@ -208,53 +348,45 @@ export default function HomePage() {
       }
     }
   };
-  
+
   // --- Status Text ---
   const getStatusText = () => {
     if (error) return '';
     if (isRecording) {
-      if (isRecognizing) return "Analyzing...";
-      return "Listening... Play music or hum a tune!";
+      if (isRecognizing) return 'Analyzing...';
+      return 'Listening... Play music or hum a tune!';
     }
     return 'Ready to listen';
   };
 
   const buttonColor = error ? '#EF4444' : '#4A52EB';
-return (
+  return (
     <>
       <Header />
       <main className="flex min-h-screen flex-col items-center justify-center p-24 text-center bg-black pt-32">
         <h1 className="text-5xl font-bold mb-4" style={{ color: '#D1F577' }}>
           Find a Song!
         </h1>
-        <p className={`text-lg mb-12 ${isRecording && !isRecognizing && 'animate-pulse'}`} style={{ color: '#EEECFF' }}>
+        <p
+          className={`text-lg mb-12 ${
+            isRecording && !isRecognizing && 'animate-pulse'
+          }`}
+          style={{ color: '#EEECFF' }}
+        >
           {getStatusText()}
         </p>
-        
-        {/* ... (Button and animation div is unchanged) ... */}
+
         <div className="relative flex items-center justify-center mb-8">
           {isRecording && !error && (
-            <>
-              <div className="absolute w-32 h-32 rounded-full animate-ping" style={{ 
-                backgroundColor: '#4A52EB',
-                opacity: 0.3,
-                animationDuration: '2s'
-              }} />
-              <div className="absolute w-40 h-40 rounded-full animate-ping" style={{ 
-                backgroundColor: '#4A52EB',
-                opacity: 0.2,
-                animationDuration: '2.5s',
-                animationDelay: '0.3s'
-            }} />
-              <div className="absolute w-48 h-48 rounded-full animate-ping" style={{ 
-                backgroundColor: '#4A52EB',
-                opacity: 0.1,
-                animationDuration: '3s',
-                animationDelay: '0.6s'
-              }} />
-            </>
+            <canvas
+              ref={canvasRef}
+              width={VISUALIZER_CANVAS_SIZE}
+              height={VISUALIZER_CANVAS_SIZE}
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+            />
           )}
-          <button 
+
+          <button
             onClick={isRecording ? handleStopRecording : handleStartRecording}
             className="relative w-24 h-24 rounded-full font-bold text-white shadow-2xl transition-all duration-300 hover:scale-105 z-10 flex items-center justify-center"
             style={{ backgroundColor: buttonColor }}
@@ -266,8 +398,12 @@ return (
               </svg>
             ) : (
               <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a3 3 0 016 0v2a3 3 0 11-6 0V9z" clipRule="evenodd"/>
+                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a3 3 0 016 0v2a3 3 0 11-6 0V9z"
+                  clipRule="evenodd"
+                />
               </svg>
             )}
           </button>
@@ -280,12 +416,19 @@ return (
         )}
 
         {!session && !isRecording && !error && (
-          <div className="mt-8 p-4 rounded-lg" style={{ backgroundColor: '#1F1F1F' }}>
+          <div
+            className="mt-8 p-4 rounded-lg"
+            style={{ backgroundColor: '#1F1F1F' }}
+          >
             <p className="text-sm" style={{ color: '#EEECFF' }}>
-              <Link href="/login" className="font-semibold hover:underline" style={{ color: '#D1F577' }}>
+              <Link
+                href="/login"
+                className="font-semibold hover:underline"
+                style={{ color: '#D1F577' }}
+              >
                 Sign in
-              </Link>
-              {' '}to save your search history
+              </Link>{' '}
+              to save your search history
             </p>
           </div>
         )}

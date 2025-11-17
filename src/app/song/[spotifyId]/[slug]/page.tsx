@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
-import Link from 'next/link';
+// import Link from 'next/link';
 import Header from '@/components/Header';
 import Image from 'next/image';
 
@@ -38,15 +38,15 @@ function SongResultCard({ track }: { track: SpotifyTrack }) {
   const image = track.album?.images?.[0];
 
   return (
-    <div 
-      className="p-6 rounded-lg text-left w-full max-w-md transition-opacity duration-700 opacity-100"
+    <div
+      className="p-6 rounded-lg text-left w-full max-w-md"
       style={{ backgroundColor: '#1F1F1F' }}
     >
       {image && (
-        <Image 
-          src={image.url} 
+        <Image
+          src={image.url}
           alt={`Album cover for ${track.name}`}
-          className="w-full h-auto rounded-lg mb-4 object-cover" 
+          className="w-full h-auto rounded-lg mb-4 object-cover"
           width={image.width}
           height={image.height}
           priority
@@ -130,8 +130,24 @@ export default function SongPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [transitionData, setTransitionData] = useState<{
+    title: string;
+    artists: string;
+  } | null>(null);
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [isFadingOut, setIsFadingOut] = useState(false);
+
   useEffect(() => {
     if (!spotifyId) return;
+
+    // Check for transition data in sessionStorage
+    const storedData = sessionStorage.getItem('transitionData');
+    if (storedData) {
+      setTransitionData(JSON.parse(storedData));
+      setShowOverlay(true);
+      // clear so it doesn't show on refresh
+      sessionStorage.removeItem('transitionData');
+    }
 
     const fetchSongData = async () => {
       setIsLoading(true);
@@ -158,26 +174,66 @@ export default function SongPage() {
     fetchSongData();
   }, [spotifyId]);
 
-  const getStatusText = () => {
-    if (isLoading) return 'Loading song...';
-    if (error) return 'Song not found';
-    if (songData) return 'Result found!';
-    return '';
-  };
+  useEffect(() => {
+    if (!isLoading && showOverlay) {
+      setIsFadingOut(true);
+
+      const timer = setTimeout(() => {
+        setShowOverlay(false);
+      }, 1000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading, showOverlay]);
+
+  // const getStatusText = () => {
+  //   if (isLoading) return 'Loading song...';
+  //   if (error) return 'Song not found';
+  //   if (songData) return 'Result found!';
+  //   return '';
+  // };
 
   return (
     <>
+
+    {showOverlay && transitionData && (
+        <div
+          className={`fixed inset-0 bg-black bg-opacity-90 flex flex-col items-center justify-center z-50 ${
+            isFadingOut ? 'animate-fade-out' : 'animate-fade-in'
+          }`}
+          style={{ animationDuration: isFadingOut ? '1s' : '0.5s' }}
+        >
+          <div
+            className="text-center animate-fade-in-up"
+            style={{ animationDuration: '1s', animationDelay: '0.3s' }}
+          >
+            <h1
+              className="text-5xl md:text-7xl font-bold mb-4 px-4"
+              style={{ color: '#D1F577' }}
+            >
+              {transitionData.title}
+            </h1>
+            <p
+              className="text-3xl md:text-4xl px-4"
+              style={{ color: '#EEECFF' }}
+            >
+              {transitionData.artists}
+            </p>
+          </div>
+        </div>
+      )}
+      
       <Header />
       <main className="flex min-h-screen flex-col items-center justify-start p-12 sm:p-24 text-center bg-black pt-32">
         
-        <h1 className="text-5xl font-bold mb-4" style={{ color: '#D1F577' }}>
+        {/* <h1 className="text-5xl font-bold mb-4" style={{ color: '#D1F577' }}>
           Find a Song!
         </h1>
         <p className="text-lg mb-12" style={{ color: '#EEECFF' }}>
           {getStatusText()}
-        </p>
+        </p> */}
         
-        <Link 
+        {/* <Link 
           href="/"
           className="relative w-24 h-24 rounded-full font-bold text-white shadow-2xl transition-all duration-300 hover:scale-105 z-10 flex items-center justify-center mb-12"
           style={{ backgroundColor: '#4A52EB' }}
@@ -186,25 +242,34 @@ export default function SongPage() {
             <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a3 3 0 016 0v2a3 3 0 11-6 0V9z" clipRule="evenodd"/>
           </svg>
-        </Link>
+        </Link> */}
+        <div
+          className={`w-full max-w-2xl flex flex-col items-center transition-opacity duration-1000 ${
+            isLoading ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          {isLoading && (
+            <div className="text-lg" style={{ color: '#EEECFF' }}>
+              Loading details...
+            </div>
+          )}
 
-        {isLoading && (
-          <div className="text-lg" style={{ color: '#EEECFF' }}>Loading details...</div>
-        )}
+          {error && (
+            <p
+              className="mt-4 text-lg font-medium"
+              style={{ color: '#EF4444' }}
+            >
+              Error: {error}
+            </p>
+          )}
 
-        {error && (
-          <p className="mt-4 text-lg font-medium" style={{ color: '#EF4444' }}>
-            Error: {error}
-          </p>
-        )}
-      
-        {!isLoading && !error && songData && (
-          <>
-            <SongResultCard track={songData.track} />
-            <Recommendations recommendations={songData.recommendations} />
-          </>
-        )}
-
+          {!isLoading && !error && songData && (
+            <>
+              <SongResultCard track={songData.track} />
+              <Recommendations recommendations={songData.recommendations} />
+            </>
+          )}
+        </div>
       </main>
     </>
   );
