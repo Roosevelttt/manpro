@@ -141,7 +141,7 @@ export default function RegisterPage() {
             {/* Username (bound to email for backend compatibility) */}
             <div>
               <label htmlFor="email" className="block text-sm font-semibold text-[#0B1A63] mb-1">
-                Username<span className="text-red-500">*</span>
+                Email<span className="text-red-500">*</span>
               </label>
               <input
                 id="email"
@@ -150,7 +150,7 @@ export default function RegisterPage() {
                 value={formData.email}
                 onChange={handleChange}
                 required
-                placeholder="Username"
+                placeholder="your@gmail.com"
                 className="w-full border border-gray-300 rounded-md px-4 py-2 shadow-sm focus:ring-2 focus:ring-[#0B1A63]/30 focus:outline-none text-black placeholder:text-gray-400"
               />
             </div>
