@@ -212,7 +212,7 @@ export default function SongPage() {
 
     {showOverlay && transitionData && (
         <div
-          className={`fixed inset-0 bg-black bg-opacity-90 flex flex-col items-center justify-center z-50 ${
+          className={`fixed inset-0 bg-[#D1F577] bg-opacity-90 flex flex-col items-center justify-center z-50 ${
             isFadingOut ? 'animate-fade-out' : 'animate-fade-in'
           }`}
           style={{ animationDuration: isFadingOut ? '1s' : '0.5s' }}
@@ -222,14 +222,13 @@ export default function SongPage() {
             style={{ animationDuration: '1s', animationDelay: '0.3s' }}
           >
             <h1
-              className="text-5xl md:text-7xl font-bold mb-4 px-4"
-              style={{ color: '#D1F577' }}
+              className="text-5xl md:text-7xl font-bold mb-4 px-4 text-black"
             >
               {transitionData.title}
             </h1>
             <p
               className="text-3xl md:text-4xl px-4"
-              style={{ color: '#EEECFF' }}
+              style={{ color: '#282A2C' }}
             >
               {transitionData.artists}
             </p>
@@ -238,7 +237,7 @@ export default function SongPage() {
       )}
       
       <Header />
-      <main className="flex min-h-screen flex-col items-center justify-start p-12 sm:p-24 text-center bg-black pt-32">
+      <main className="flex min-h-screen flex-col items-center justify-start p-12 sm:p-24 text-center bg-black pt-32 scrollbar">
         
         {/* <h1 className="text-5xl font-bold mb-4" style={{ color: '#D1F577' }}>
           Find a Song!

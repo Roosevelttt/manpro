@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef, useEffect, useCallback } from 'react'; // Import useCallback
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   getOptimalAudioConstraints,
   getSupportedAudioMimeType,
@@ -13,6 +13,7 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import Header from '@/components/Header';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 
 // --- Constants ---
 // const RECORDING_INTERVAL_MS = 10000;
@@ -367,17 +368,30 @@ export default function HomePage() {
     <>
       <Header />
       <main className="flex min-h-screen flex-col items-center justify-center p-24 text-center bg-black pt-32 overflow-hidden">
-        <h1
-          className={`text-5xl font-bold mb-4 transition-all duration-500 ease-in-out ${
-            isRecording
-              ? 'opacity-0 -translate-y-4' 
-              : 'opacity-100 translate-y-0' 
-          }`}
-          style={{ color: '#D1F577' }}
-        >
-          Find a Song!
-        </h1>
-        
+        <div className="w-full flex justify-center">
+          <Link
+            href="/"
+            className={`flex items-center gap-4 text-5xl font-bold mb-4 transition-all duration-500 ease-in-out -translate-x-4 md:-translate-x-3 ${
+              isRecording
+                ? 'opacity-0 -translate-y-4'
+                : 'opacity-100 translate-y-0'
+            }`}
+          >
+            <Image
+              src="/svg/tebaklagu-default.svg"
+              alt="TebakLagu Logo"
+              width={36}
+              height={36}
+              priority
+            />
+
+            <span className="flex items-center font-germagont font-regular">
+              <span style={{ color: "#fff1ff" }}>tebak</span>
+              <span style={{ color: "#D1F577" }}>lagu</span>
+            </span>
+          </Link>
+        </div>
+
         <p
           className={`text-lg mb-12 transition-all duration-500 ease-in-out ${
             isRecording

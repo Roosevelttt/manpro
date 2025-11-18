@@ -9,6 +9,14 @@ import Toast from '@/components/Toast';
 import Link from 'next/link';
 import Image from 'next/image';
 
+const slugify = (str: string) =>
+  str
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
 interface HistoryItem {
   id: string;
   title: string;
@@ -18,6 +26,7 @@ interface HistoryItem {
   coverUrl: string | null;
   duration: number | null;
   searchedAt: string;
+  spotifyId: string | null;
 }
 
 export default function HistoryPage() {
@@ -224,63 +233,82 @@ export default function HistoryPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {history.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-4 rounded-lg flex gap-4 items-start transition-all hover:opacity-90"
-                  style={{ backgroundColor: '#1F1F1F' }}
-                >
-                  <div className="flex-shrink-0">
-                    {item.coverUrl ? (
-                      <Image
-                        src={item.coverUrl}
-                        alt={item.album}
-                        width={80}
-                        height={80}
-                        className="rounded object-cover"
-                      />
+              {history.map((item) => {
+                const slug = slugify(item.title);
+                const href = item.spotifyId ? `/song/${item.spotifyId}/${slug}` : null;
+                
+                const content = (
+                  <>
+                    <div className="flex-shrink-0">
+                      {item.coverUrl ? (
+                        <Image
+                          src={item.coverUrl}
+                          alt={item.album}
+                          width={80}
+                          height={80}
+                          className="rounded object-cover"
+                        />
+                      ) : (
+                        <div className="w-20 h-20 rounded flex items-center justify-center" style={{ backgroundColor: '#4A52EB' }}>
+                          <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex-grow min-w-0">
+                      <h3 className="text-xl font-bold truncate mb-1" style={{ color: '#D1F577' }}>
+                        {item.title}
+                      </h3>
+                      <p className="text-md truncate mb-1" style={{ color: '#F1F1F3' }}>
+                        {item.artists.join(', ')}
+                      </p>
+                      <p className="text-sm truncate mb-2" style={{ color: '#EEECFF', opacity: 0.7 }}>
+                        {item.album}
+                        {item.duration && ` • ${formatDuration(item.duration)}`}
+                      </p>
+                      <p className="text-xs" style={{ color: '#EEECFF', opacity: 0.5 }}>
+                        {formatDate(item.searchedAt)}
+                      </p>
+                    </div>
+                  </>
+                );
+
+                return (
+                  <div
+                    key={item.id}
+                    className="p-4 rounded-lg flex gap-4 items-start justify-between"
+                    style={{ backgroundColor: '#1F1F1F' }}
+                  >
+                    {href ? (
+                      <Link href={href} className="flex-grow flex gap-4 items-start min-w-0 transition-all hover:opacity-80">
+                        {content}
+                      </Link>
                     ) : (
-                      <div className="w-20 h-20 rounded flex items-center justify-center" style={{ backgroundColor: '#4A52EB' }}>
-                        <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
-                        </svg>
+                      <div className="flex-grow flex gap-4 items-start min-w-0">
+                        {content}
                       </div>
                     )}
-                  </div>
 
-                  <div className="flex-grow min-w-0">
-                    <h3 className="text-xl font-bold truncate mb-1" style={{ color: '#D1F577' }}>
-                      {item.title}
-                    </h3>
-                    <p className="text-md truncate mb-1" style={{ color: '#F1F1F3' }}>
-                      {item.artists.join(', ')}
-                    </p>
-                    <p className="text-sm truncate mb-2" style={{ color: '#EEECFF', opacity: 0.7 }}>
-                      {item.album}
-                      {item.duration && ` • ${formatDuration(item.duration)}`}
-                    </p>
-                    <p className="text-xs" style={{ color: '#EEECFF', opacity: 0.5 }}>
-                      {formatDate(item.searchedAt)}
-                    </p>
+                    <button
+                      onClick={() => handleDelete(item.id)}
+                      disabled={deletingId === item.id}
+                      className="flex-shrink-0 p-2 rounded transition-all hover:opacity-80 disabled:opacity-50 z-10"
+                      style={{ color: '#EF4444' }}
+                      title="Delete"
+                    >
+                      {deletingId === item.id ? (
+                        <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#EF4444' }}></div>
+                      ) : (
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </button>
                   </div>
-
-                  <button
-                    onClick={() => handleDelete(item.id)}
-                    disabled={deletingId === item.id}
-                    className="flex-shrink-0 p-2 rounded transition-all hover:opacity-80 disabled:opacity-50"
-                    style={{ color: '#EF4444' }}
-                    title="Delete"
-                  >
-                    {deletingId === item.id ? (
-                      <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#EF4444' }}></div>
-                    ) : (
-                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
