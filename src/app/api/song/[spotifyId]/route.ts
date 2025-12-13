@@ -1,177 +1,261 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-// ================== ENV ==================
-const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID!;
-const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET!;
-const LASTFM_API_KEY = process.env.LASTFM_API_KEY!; // <-- ADD THIS
+// --- TYPE DEFINITIONS (No More 'any') ---
 
-// ================== TYPES ==================
+interface SpotifyTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
 interface SpotifyArtist {
-  id: string;
   name: string;
 }
-interface SpotifyAlbum {
-  name: string;
-  images: Array<{ url: string; height: number; width: number }>;
-}
+
 interface SpotifyTrack {
-  id: string;
   name: string;
   artists: SpotifyArtist[];
-  album: SpotifyAlbum;
-  preview_url: string | null;
-  external_urls: {
-    spotify: string;
+  album: { name: string };
+  external_urls: { spotify: string };
+}
+
+interface LastFmTag {
+  name: string;
+  url?: string;
+}
+
+interface LastFmImage {
+  '#text': string;
+  size: string;
+}
+
+interface LastFmTrackBasic {
+  name: string;
+  artist: { name: string } | string; // Kadang object, kadang string tergantung endpoint
+  match?: number;
+  image?: LastFmImage[];
+}
+
+interface LastFmTrackInfo {
+  track?: {
+    playcount?: string;
+    toptags?: {
+      tag: LastFmTag[];
+    };
   };
 }
-interface Recommendation {
+
+interface DeezerTrack {
+  id: number;
   title: string;
-  artists: { name: string }[];
-  album: { name: string };
-  spotifyId: string;
-  preview_url: string | null;
-  spotifyUrl: string;
+  link: string;
+  preview: string;
+  album: { title: string; cover_medium: string };
 }
 
-interface LastFmSimilarTrack { name: string; artist: { name: string }; url?: string }
-interface LastFmSimilarResp { similartracks?: { track?: LastFmSimilarTrack[] } }
-interface SpotifySearchResp { tracks: { items: SpotifyTrack[] } }
+interface EnrichedRecommendation {
+  title: string;
+  artist: string;
+  similarity: number;
+  tags: string[];
+  playcount: number;
+  deezerPreview: string | null;
+  deezerAlbum: string | null;
+  vibeScore: number;
+  tagOverlap: number;
+}
 
-// ================== SPOTIFY UTILS ==================
-async function getSpotifyAccessToken(): Promise<string> {
-  const authString = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
+// --- CONFIG ---
+const LASTFM_KEY = process.env.LASTFM_API_KEY;
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+
+// --- HELPERS ---
+
+async function getSpotifyToken(): Promise<string> {
+  const auth = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
   const res = await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
     headers: {
-      Authorization: `Basic ${authString}`,
+      Authorization: `Basic ${auth}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: 'grant_type=client_credentials',
-    cache: 'no-store',
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(`Spotify Auth Error: ${data.error_description || res.statusText}`);
-  return data.access_token as string;
+  
+  if (!res.ok) throw new Error('Failed to get Spotify token');
+  const data = (await res.json()) as SpotifyTokenResponse;
+  return data.access_token;
 }
 
-async function getSpotifyTrackDetails(trackId: string, token: string): Promise<SpotifyTrack | null> {
+async function lastfmGet<T>(params: Record<string, string>): Promise<T> {
+  if (!LASTFM_KEY) throw new Error('Missing LASTFM_API_KEY');
+  const base = 'https://ws.audioscrobbler.com/2.0/';
+  const searchParams = new URLSearchParams({ api_key: LASTFM_KEY, format: 'json', ...params });
+  const res = await fetch(`${base}?${searchParams.toString()}`);
+  if (!res.ok) throw new Error(`Last.fm API error: ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+async function fetchTrackInfo(artist: string, track: string): Promise<LastFmTrackInfo | null> {
   try {
-    const res = await fetch(
-      `https://api.spotify.com/v1/tracks/${trackId}?market=ID`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: 'no-store',
-      }
-    );
-    if (!res.ok) {
-      console.error("[Spotify] getTrackDetails error:", res.status);
-      return null;
-    }
-    const data: SpotifyTrack = await res.json();
-    return data;
-  } catch (err) {
-    console.error("[Spotify] getSpotifyTrackDetails error:", err);
-    return null;
-  }
+    return await lastfmGet<LastFmTrackInfo>({ method: 'track.getInfo', artist, track });
+  } catch { return null; }
 }
 
-function cleanTitle(raw: string): string {
-  return raw
-    .replace(/\s*\(from[^)]*\)/gi, "")
-    .replace(/\s*\(remaster(ed)?[^)]*\)/gi, "")
-    .replace(/\s*\(live[^)]*\)/gi, "")
-    .replace(/\s*-\s*live.*$/i, "")
-    .replace(/\s*-\s*remaster(ed)?\s*\d{0,4}$/i, "")
-    .trim();
+// Kita tetap butuh Deezer hanya untuk PREVIEW AUDIO (karena Spotify preview sering null)
+async function deezerSearch(artist: string, track: string): Promise<DeezerTrack | null> {
+  try {
+    const q = encodeURIComponent(`artist:"${artist}" track:"${track}"`);
+    const res = await fetch(`https://api.deezer.com/search?q=${q}&limit=1`);
+    const json = await res.json();
+    return (json.data && json.data.length > 0) ? (json.data[0] as DeezerTrack) : null;
+  } catch { return null; }
 }
 
-async function lastfmSimilar(artist: string, track: string, limit = 6): Promise<LastFmSimilarTrack[]> {
-  const url = new URL("https://ws.audioscrobbler.com/2.0/");
-  url.searchParams.set("method", "track.getSimilar");
-  url.searchParams.set("artist", artist);
-  url.searchParams.set("track", track);
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("autocorrect", "1");
-  url.searchParams.set("api_key", LASTFM_API_KEY);
-  url.searchParams.set("format", "json");
-
-  const res = await fetch(url.toString(), { cache: "no-store" });
-  const txt = await res.text();
-  if (!res.ok || !txt) return [];
-  let data: LastFmSimilarResp | null = null;
-  try { data = JSON.parse(txt) as LastFmSimilarResp; } catch { return []; }
-  return data?.similartracks?.track ?? [];
+function normalizeTags(tags: LastFmTag[] | undefined): string[] {
+  if (!tags || !Array.isArray(tags)) return [];
+  return tags.map((t) => t.name).filter(Boolean);
 }
 
-async function searchSpotifyTrack(q: string, token: string, market?: string): Promise<SpotifyTrack | null> {
-  const url = new URL("https://api.spotify.com/v1/search");
-  url.searchParams.set("q", q);
-  url.searchParams.set("type", "track");
-  url.searchParams.set("limit", "1");
-  if (market) url.searchParams.set("market", market);
-  const r = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
-  if (!r.ok) return null;
-  const j: SpotifySearchResp = await r.json();
-  return j.tracks.items?.[0] ?? null;
-}
+// --- MAIN ROUTE ---
 
-async function resolveToSpotify(items: LastFmSimilarTrack[], token: string): Promise<Recommendation[]> {
-  const jobs = items.map(async (it) => {
-    const q = `track:"${cleanTitle(it.name)}" artist:"${it.artist.name}"`;
-    const found = (await searchSpotifyTrack(q, token, "ID")) || (await searchSpotifyTrack(q, token));
-    if (!found) return null;
-    const rec: Recommendation = {
-      title: found.name,
-      artists: found.artists.map((a) => ({ name: a.name })),
-      album: { name: found.album.name },
-      spotifyId: found.id,
-      preview_url: found.preview_url,
-      spotifyUrl: found.external_urls?.spotify ?? `https://open.spotify.com/track/${found.id}`,
-    };
-    return rec;
-  });
-
-  const settled = await Promise.allSettled(jobs);
-  const uniq = new Map<string, Recommendation>();
-  for (const s of settled) if (s.status === "fulfilled" && s.value) uniq.set(s.value.spotifyId, s.value);
-  return Array.from(uniq.values());
-}
-
-// ================== MAIN HANDLER ==================
 export async function GET(
-  req: NextRequest,
-  context: { params: Promise<{ spotifyId: string }> }
+  request: Request,
+  { params }: { params: { spotifyId: string } }
 ) {
-  const { spotifyId } = await context.params;
-
-  if (!spotifyId || spotifyId === 'unknown') {
-    return NextResponse.json({ error: 'Valid Spotify ID is required' }, { status: 400 });
-  }
-
   try {
-    const token = await getSpotifyAccessToken();
-    const trackDetails = await getSpotifyTrackDetails(spotifyId, token);
+    const { spotifyId } = params;
+    
+    // 1. GET SPOTIFY TRACK DATA
+    const token = await getSpotifyToken();
+    const spotifyRes = await fetch(`https://api.spotify.com/v1/tracks/${spotifyId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-    if (!trackDetails) {
-      return NextResponse.json({ error: 'Track not found' }, { status: 404 });
+    if (!spotifyRes.ok) throw new Error('Spotify Track not found');
+    const spotifyTrack = (await spotifyRes.json()) as SpotifyTrack;
+
+    const title = spotifyTrack.name;
+    const artist = spotifyTrack.artists[0].name;
+
+    // 2. LAST.FM LOGIC
+    const referenceInfo = await fetchTrackInfo(artist, title);
+    const referenceTags = normalizeTags(referenceInfo?.track?.toptags?.tag);
+    const baseTagSet = new Set(referenceTags.map((t) => t.toLowerCase()));
+
+    // Get Similar Tracks
+    interface LastFmSimilarResponse {
+      similartracks: { track: LastFmTrackBasic[] };
+    }
+    
+    let similarTracks: LastFmTrackBasic[] = [];
+    try {
+      const similarResp = await lastfmGet<LastFmSimilarResponse>({ method: 'track.getsimilar', artist, track: title, limit: '30' });
+      similarTracks = similarResp.similartracks.track || [];
+    } catch (e) { 
+      console.warn('Similar tracks fetch warning:', e); 
     }
 
-    let recommendations: Recommendation[] = [];
-    if (LASTFM_API_KEY) {
-      const trackName = trackDetails.name;
-      const artistName = trackDetails.artists[0].name;
-      const similarTracks = await lastfmSimilar(artistName, trackName, 6);
-      recommendations = await resolveToSpotify(similarTracks, token);
-    } else {
-      console.warn("LASTFM_API_KEY not set, skipping recommendations.");
-    }
+    const topN = 8; 
+    const sliced = similarTracks.slice(0, topN);
+
+    // 3. ENRICH DATA (Playcount & Preview)
+    const enrichedPromises = sliced.map(async (t): Promise<EnrichedRecommendation> => {
+      const recTitle = t.name;
+      // Handle Last.fm structure inconsistencies
+      const recArtist = typeof t.artist === 'string' ? t.artist : t.artist.name;
+      
+      let playcount = 0;
+      let tags: string[] = [];
+
+      try {
+        const info = await fetchTrackInfo(recArtist, recTitle);
+        if (info?.track) {
+          playcount = info.track.playcount ? Number(info.track.playcount) : 0;
+          tags = normalizeTags(info.track.toptags?.tag);
+        }
+      } catch {}
+
+      // Get Preview from Deezer
+      const dz = await deezerSearch(recArtist, recTitle);
+
+      return {
+        title: recTitle,
+        artist: recArtist,
+        similarity: t.match ? Number(t.match) : 0,
+        tags,
+        playcount,
+        deezerPreview: dz?.preview || null,
+        deezerAlbum: dz?.album?.title || null,
+        vibeScore: 0, // Placeholder, calculated below
+        tagOverlap: 0 // Placeholder
+      };
+    });
+
+    const enrichedResults = await Promise.all(enrichedPromises);
+
+    // 4. SCORING ALGORITHM (0-100 Scale)
+    const tagOverlapCounts = enrichedResults.map((rec) => {
+      return rec.tags.filter((tag) => baseTagSet.has(tag.toLowerCase())).length;
+    });
+    
+    const listenedScores = enrichedResults.map((rec) => (rec.playcount ? Math.log10(rec.playcount + 1) : 0));
+    
+    const maxListened = Math.max(...listenedScores, 0.0001);
+    const maxTag = Math.max(...tagOverlapCounts, 1);
+
+    enrichedResults.forEach((rec, idx) => {
+      // Normalize Similarity (0-100)
+      let simScore = rec.similarity || 0;
+      if (simScore <= 1 && simScore > 0) {
+         simScore = simScore * 100;
+      }
+      rec.similarity = simScore; 
+
+      // Normalize Popularity (0-100)
+      const listScore = (listenedScores[idx] / maxListened) * 100;
+      
+      // Normalize Tag Overlap (0-100)
+      const tagScore = (tagOverlapCounts[idx] / maxTag) * 100;
+      rec.tagOverlap = tagOverlapCounts[idx];
+
+      // Final Vibe Score Formula
+      rec.vibeScore = (simScore * 0.55) + (listScore * 0.3) + (tagScore * 0.15);
+    });
+
+    // Sort by Vibe Score
+    enrichedResults.sort((a, b) => b.vibeScore - a.vibeScore);
+
+    // 5. RESPONSE FORMATTING
+    const formattedRecommendations = enrichedResults.map((rec) => {
+        return {
+            title: rec.title,
+            artists: [{ name: rec.artist }],
+            album: { name: rec.deezerAlbum || 'Single/Unknown' },
+            // Gunakan random string sebagai ID React list key karena kita tidak punya ID Spotify asli
+            spotifyId: `rec-${Math.random().toString(36).substr(2, 9)}`, 
+            preview_url: rec.deezerPreview,
+            // Construct Link Pencarian Spotify
+            spotifyUrl: `https://open.spotify.com/search/${encodeURIComponent(rec.artist + ' ' + rec.title)}`,
+            
+            vibeScore: rec.vibeScore,
+            similarity: rec.similarity,
+            playcount: rec.playcount,
+            tags: rec.tags,
+            tagOverlap: rec.tagOverlap
+        };
+    });
 
     return NextResponse.json({
-      track: trackDetails,
-      recommendations,
+      track: spotifyTrack,
+      recommendations: formattedRecommendations
     });
-  } catch (error) {
-    console.error('❌ API Song error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+
+  } catch (error: unknown) {
+    // Type checking for unknown error
+    const message = error instanceof Error ? error.message : 'Internal Server Error';
+    console.error('API Error:', error);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
